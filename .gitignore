@@ -2,6 +2,9 @@
 # Includes .agent-runs/sessions/<id>/, .agent-runs/approvals/, consumed markers, and graph output.
 .agent-runs/
 
+# Generated repo knowledge graph (graphify). Regenerate with /graphify; do not commit.
+graphify-out/
+
 # DEPRECATED broad approval override flags (honored only with DFC_ALLOW_LEGACY_FLAGS=1; unsafe).
 # Prefer scoped approval records under .agent-runs/approvals/. Never commit these.
 .allow-protected-edits
