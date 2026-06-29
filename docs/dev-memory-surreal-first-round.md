@@ -1,5 +1,10 @@
 # Shared Dev Memory On Hosted SurrealDB 3.1
 
+> This is the **first SurrealDB memory slice**, originally built and live-validated in the
+> temporary `dev-flow-control-codex` fork and merged back here. The canonical defaults below
+> use `dev-flow-control` (not the fork's `*-codex` values). See
+> [`dev-flow-control-spec.md`](dev-flow-control-spec.md) for the full architecture and status.
+
 This repo uses one storage solution for agent memory: hosted SurrealDB 3.1.
 Codex, Claude Code, and future agents all use the same repo-local CLI commands.
 
@@ -24,8 +29,8 @@ Fill in real credentials there or export the same variables in your shell:
 ```bash
 DFC_SURREAL_URL=wss://<surrealdb-cloud-endpoint>
 DFC_SURREAL_NS=dev_flow_control
-DFC_SURREAL_DB=repo_dev_flow_control_codex
-DFC_REPO_ID=dev-flow-control-codex
+DFC_SURREAL_DB=repo_dev_flow_control
+DFC_REPO_ID=dev-flow-control
 DFC_SURREAL_USER=<username>
 DFC_SURREAL_PASS=<password>
 DFC_SURREAL_AUTH_SCOPE=root

@@ -1,20 +1,4 @@
-# dev-flow-control-codex
-
-This fork is Codex-ready and agent-neutral. Codex and Claude Code share the same
-hosted SurrealDB 3.1 dev-memory layer through the repo-local `pnpm dfc:*`
-commands documented in [AGENTS.md](AGENTS.md) and
-[docs/dev-memory-surreal-first-round.md](docs/dev-memory-surreal-first-round.md).
-Claude compatibility remains available through `.claude/skills/dfc-context/SKILL.md`,
-but the CLI is the common interface.
-
-```bash
-pnpm dfc:db:check
-pnpm dfc:db:migrate
-pnpm dfc:ingest --agent codex
-pnpm dfc:remember --kind decision --text "..." --agent codex
-pnpm dfc:context --task "..." --agent codex
-pnpm dfc:status
-```
+# dev-flow-control
 
 A Claude Code plugin pack for **subscription-first, token-efficient, higher-autonomy,
 higher-accuracy** autonomous development. It turns Claude Code into a development
@@ -49,6 +33,53 @@ examples, and this README.
 > graph integration, session-scoped markers, richer observability fields, optional MCP examples, and
 > tightened read-only agent Bash wording. **These changes were NOT tested, validated, or run in any
 > live session — by instruction.** Verify before relying on them; the plugin is not validated.
+
+## Shared dev-memory (agent-neutral SurrealDB `dfc` CLI)
+
+`dev-flow-control` remains the canonical **Claude Code plugin** repo. Alongside the plugin it
+ships a shared, **agent-neutral** dev-memory CLI (`pnpm dfc:*`) backed by **hosted SurrealDB** —
+one per-repo dev-memory database that every agent reads and writes:
+
+- **Claude Code** compatibility is supported through
+  [`.claude/skills/dfc-context/SKILL.md`](.claude/skills/dfc-context/SKILL.md) (the `/dfc-context`
+  skill) and the plugin docs.
+- **Codex and future agents** use the same CLI, wired through [`AGENTS.md`](AGENTS.md) and the
+  `pnpm dfc:*` scripts.
+- The dev-memory layer is **agent-neutral**: nothing about the Claude plugin depends on Codex; the
+  CLI is the common interface and SurrealDB is the single shared backend.
+
+Architecture and rationale: [`docs/dev-flow-control-spec.md`](docs/dev-flow-control-spec.md),
+[`docs/spec-delta-surrealdb.md`](docs/spec-delta-surrealdb.md), and
+[`docs/dev-memory-surreal-first-round.md`](docs/dev-memory-surreal-first-round.md).
+
+### Quickstart
+
+```bash
+pnpm install
+cp .dfc/surreal.example.env .dfc/surreal.env
+pnpm dfc:db:check
+pnpm dfc:db:migrate
+pnpm dfc:ingest --agent claude
+pnpm dfc:context --task "Inspect the plugin architecture" --agent claude
+```
+
+`.dfc/surreal.env` is gitignored — never commit real credentials, and never print or commit
+`DFC_SURREAL_PASS`. Canonical defaults: `DFC_SURREAL_NS=dev_flow_control`,
+`DFC_SURREAL_DB=repo_dev_flow_control`, `DFC_REPO_ID=dev-flow-control`.
+
+### Dev-memory status
+
+**Implemented and validated:**
+
+- The SurrealDB memory slice was built and live-validated in the temporary
+  `dev-flow-control-codex` fork.
+- Imported into this canonical repo by this PR after adapting it to canonical naming.
+
+**Still pending:**
+
+- Live Claude Code plugin install test and hook-payload validation.
+- Graph / vector / document memory expansion (planned, not implemented).
+- Full efficiency benchmark before any token-savings claim.
 
 ## Architecture
 

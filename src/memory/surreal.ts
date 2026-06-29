@@ -52,8 +52,8 @@ export function loadConfig(): DfcConfig {
   return {
     url: get("DFC_SURREAL_URL"),
     namespace: get("DFC_SURREAL_NS") || "dev_flow_control",
-    database: get("DFC_SURREAL_DB") || "repo_dev_flow_control_codex",
-    repoId: get("DFC_REPO_ID") || "dev-flow-control-codex",
+    database: get("DFC_SURREAL_DB") || "repo_dev_flow_control",
+    repoId: get("DFC_REPO_ID") || "dev-flow-control",
     username: get("DFC_SURREAL_USER"),
     password: get("DFC_SURREAL_PASS"),
     authScope: normalizeAuthScope(get("DFC_SURREAL_AUTH_SCOPE") || "root"),

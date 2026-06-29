@@ -1,7 +1,8 @@
-# `.dfc/` - dev-flow-control-codex dev-memory config
+# `.dfc/` - dev-flow-control dev-memory config
 
-This folder holds the hosted SurrealDB 3.1 connection config for the shared
-Codex/Claude dev-memory layer. It does not run a local database.
+This folder holds the hosted SurrealDB 3.1 connection config for the shared,
+agent-neutral dev-memory layer (Claude Code, Codex, and future agents). It does
+not run a local database.
 
 ## Files
 
@@ -37,8 +38,8 @@ process.env  >  .dfc/surreal.env  >  .dfc/surreal.example.env
 | ------------------ | ---------------------------------------- | ------------------------ |
 | `DFC_SURREAL_URL`  | Hosted endpoint (`wss://...`)            | required                 |
 | `DFC_SURREAL_NS`   | Namespace (shared across repos)          | `dev_flow_control`       |
-| `DFC_SURREAL_DB`   | Database (one per repo)                  | `repo_dev_flow_control_codex` |
-| `DFC_REPO_ID`      | Logical repo id stored on every row      | `dev-flow-control-codex` |
+| `DFC_SURREAL_DB`   | Database (one per repo)                  | `repo_dev_flow_control`  |
+| `DFC_REPO_ID`      | Logical repo id stored on every row      | `dev-flow-control`       |
 | `DFC_SURREAL_USER` | Username                                 | required                 |
 | `DFC_SURREAL_PASS` | Password                                 | required                 |
 | `DFC_SURREAL_AUTH_SCOPE` | `root`, `namespace`, or `database` | `root`                   |

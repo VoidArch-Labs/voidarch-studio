@@ -1,6 +1,6 @@
 # AGENTS.md
 
-This repository is agent-neutral. Codex, Claude Code, and future agents use the same repo-local CLI commands for dev memory.
+This repository is the canonical **Claude Code plugin** `dev-flow-control`. **Claude Code is the canonical local supervisor**; Codex and future agents use the same repo-local `dfc` CLI commands for dev memory. The memory layer itself is agent-neutral — every agent reads and writes the same per-repo SurrealDB database.
 
 ## Shared Dev Memory
 
@@ -8,8 +8,8 @@ This repository is agent-neutral. Codex, Claude Code, and future agents use the 
 - Scope: one namespace can serve many repos; use one database per repo.
 - This repo defaults to:
   - `DFC_SURREAL_NS=dev_flow_control`
-  - `DFC_SURREAL_DB=repo_dev_flow_control_codex`
-  - `DFC_REPO_ID=dev-flow-control-codex`
+  - `DFC_SURREAL_DB=repo_dev_flow_control`
+  - `DFC_REPO_ID=dev-flow-control`
 - Secrets must come from environment variables or `.dfc/surreal.env`; never commit real credentials.
 - The common interface is npm scripts, not agent-specific tooling.
 
@@ -44,3 +44,15 @@ Codex compatibility lives here and in `package.json` scripts. Codex should call 
 ## Claude Code
 
 Claude compatibility lives in `.claude/skills/dfc-context/SKILL.md`. The `/dfc-context` skill calls the same `pnpm dfc:context` command and reads the same SurrealDB database as Codex.
+
+## External agent rules
+
+External executors (Codex, Jules, future agents) operate under least privilege:
+
+- **Open PRs only** unless explicitly told otherwise — never push to protected branches.
+- **Never deploy.**
+- **Never edit secrets** (`.dfc/surreal.env`, `.env`, keys, tokens) and never print or echo `DFC_SURREAL_PASS`.
+- **Never change billing, model, or provider routes** (API gateways, `ANTHROPIC_BASE_URL`, Bedrock/Vertex/OpenRouter, paid modes).
+- **Never widen scope silently** — stay within the assigned task.
+- **Run verification before claiming done** (`pnpm exec tsc --noEmit`, plus task-specific checks).
+- **Report** files changed, checks run, failures, and risks.

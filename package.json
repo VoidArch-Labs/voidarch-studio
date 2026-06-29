@@ -1,9 +1,9 @@
 {
-  "name": "dev-flow-control-codex",
+  "name": "dev-flow-control",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Codex-ready dev-flow-control fork with shared hosted SurrealDB dev memory.",
+  "description": "Claude Code plugin with a shared, agent-neutral hosted SurrealDB dev-memory CLI (dfc).",
   "license": "MIT",
   "scripts": {
     "dfc:db:check": "tsx scripts/dfc-db-check.ts",
