@@ -13,6 +13,14 @@ graphify-out/
 .allow-mcp-writes
 .strict-verify
 
+# Node dependencies + build output for the dev-memory slice
+node_modules/
+dist/
+
+# Hosted SurrealDB credentials. NEVER commit real values; keep only the template.
+.dfc/*.env
+!.dfc/surreal.example.env
+
 # OS / editor cruft
 .DS_Store
 *.swp

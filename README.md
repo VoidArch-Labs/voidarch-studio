@@ -1,4 +1,20 @@
-# dev-flow-control
+# dev-flow-control-codex
+
+This fork is Codex-ready and agent-neutral. Codex and Claude Code share the same
+hosted SurrealDB 3.1 dev-memory layer through the repo-local `pnpm dfc:*`
+commands documented in [AGENTS.md](AGENTS.md) and
+[docs/dev-memory-surreal-first-round.md](docs/dev-memory-surreal-first-round.md).
+Claude compatibility remains available through `.claude/skills/dfc-context/SKILL.md`,
+but the CLI is the common interface.
+
+```bash
+pnpm dfc:db:check
+pnpm dfc:db:migrate
+pnpm dfc:ingest --agent codex
+pnpm dfc:remember --kind decision --text "..." --agent codex
+pnpm dfc:context --task "..." --agent codex
+pnpm dfc:status
+```
 
 A Claude Code plugin pack for **subscription-first, token-efficient, higher-autonomy,
 higher-accuracy** autonomous development. It turns Claude Code into a development

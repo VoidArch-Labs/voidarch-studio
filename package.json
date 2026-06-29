@@ -1,0 +1,25 @@
+{
+  "name": "dev-flow-control-codex",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Codex-ready dev-flow-control fork with shared hosted SurrealDB dev memory.",
+  "license": "MIT",
+  "scripts": {
+    "dfc:db:check": "tsx scripts/dfc-db-check.ts",
+    "dfc:db:migrate": "tsx scripts/dfc-db-migrate.ts",
+    "dfc:ingest": "tsx scripts/dfc-ingest-repo.ts",
+    "dfc:remember": "tsx scripts/dfc-remember.ts",
+    "dfc:context": "tsx scripts/dfc-context-pack.ts",
+    "dfc:status": "tsx scripts/dfc-status.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "surrealdb": "^2.0.4"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.22.4",
+    "typescript": "^5.7.0"
+  }
+}
