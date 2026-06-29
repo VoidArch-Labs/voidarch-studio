@@ -1,0 +1,105 @@
+# Specification Delta: SurrealDB Memory Architecture
+
+## Summary
+
+This delta records the move from an unspecified, plugin-local storage idea to a single,
+**agent-neutral SurrealDB dev-memory backend** reached through a repo-local `pnpm dfc:*` CLI. The
+first slice was built and live-validated in the temporary `dev-flow-control-codex` fork and is
+merged back into the canonical Claude Code plugin repo `dev-flow-control` by this PR, adapted to
+canonical naming. Claude Code remains the canonical local supervisor; Codex and future agents share
+the same CLI and database. BM25 retrieval is implemented; graph, vector, and document memory are
+planned.
+
+## Before / After Table
+
+| Area | Old spec | Updated spec |
+| --- | --- | --- |
+| Storage | No single backend selected | SurrealDB only |
+| Setup | Plugin-centric, local Claude Code focused | Hosted SurrealDB Cloud + repo-local CLI |
+| Multi-repo | Not specified as DB model | One namespace, one database per repo |
+| Repo graph | Graphify/equivalent as graph slot | Graph tools produce facts; SurrealDB stores facts |
+| Context | Graph/search/docs routed to Claude | Compact context packs from SurrealDB |
+| Docs | Docs strategy, no chunk memory | Document chunks planned in SurrealDB |
+| Vectors | Research/benchmark candidate | Planned retrieval channel after BM25/docs/graph |
+| Codex | External-agent instructions | Shared DB through AGENTS.md + pnpm dfc:* |
+| Claude skill | Routing skills | /dfc-context implemented; memory skill suite planned |
+| Observability | Local .agent-runs logs | Import logs/runs/tool events into SurrealDB |
+| Auth | Not specified | Root for bootstrap; lower-privilege daily user target |
+| Status | Feature-complete but unvalidated plugin | SurrealDB slice validated; full plugin still pending |
+| Token claims | Intended token savings | Benchmark required before claiming improvement |
+
+## Conceptual Diff
+
+```diff
+- Storage backend: undecided (SQLite? LanceDB? Kuzu? Neo4j? mix?)
++ Storage backend: SurrealDB only — no SQLite/LanceDB/Kuzu/Neo4j fallback
+
+- Repo discovery: re-read files / route graph+search+docs straight to Claude
++ Repo discovery: compact context packs assembled from SurrealDB (BM25 now)
+
+- Graph tools = a storage slot
++ Graph tools (graphify/SCIP/Tree-sitter) = fact producers; SurrealDB stores facts
+
+- Agents: Claude-plugin specific
++ Agents: agent-neutral CLI (pnpm dfc:*); Claude via /dfc-context, Codex via AGENTS.md
+
+- Memory access: direct / ad hoc
++ Memory access: only through repo-local pnpm dfc:* CLI; repo_id on every row
+
+- Status: "feature-complete"
++ Status: SurrealDB slice validated in Codex fork; canonical plugin still needs live validation
+```
+
+## Files changed
+
+Imported/adapted from the `dev-flow-control-codex` fork into canonical `dev-flow-control`:
+
+- `.dfc/README.md`, `.dfc/surreal.example.env` — hosted SurrealDB config (canonical defaults).
+- `.claude/skills/dfc-context/SKILL.md` — Claude `/dfc-context` thin wrapper.
+- `.github/workflows/typecheck.yml` — CI typecheck.
+- `schema/0001_core.surql`, `schema/0002_indexes.surql` — core tables + BM25 indexes.
+- `scripts/dfc-*.ts` — the six `dfc` CLI entrypoints.
+- `src/memory/*` — connection, types, agents, ingestion, scoring, context pack.
+- `package.json`, `pnpm-lock.yaml`, `tsconfig.json`, `.npmrc` — toolchain and `dfc:*` scripts.
+- `AGENTS.md` — agent-neutral guidance + external-agent rules; canonical naming.
+- `README.md` — preserved Claude plugin description + agent-neutral dev-memory section.
+- `docs/dev-memory-surreal-first-round.md` — first-round design doc (canonical defaults).
+
+Created in this PR:
+
+- `docs/dev-flow-control-spec.md` — specification v0.2.
+- `docs/spec-delta-surrealdb.md` — this delta.
+
+Canonical naming applied (fork → canonical): package `dev-flow-control-codex` → `dev-flow-control`;
+`DFC_SURREAL_DB=repo_dev_flow_control_codex` → `repo_dev_flow_control`;
+`DFC_REPO_ID=dev-flow-control-codex` → `dev-flow-control`; `surreal.ts` defaults updated; CI branch
+`codex/surreal-dev-memory` → `surrealdb/shared-dev-memory`.
+
+## Implemented now
+
+- Hosted SurrealDB backend + connection layer; schema migrations.
+- `pnpm dfc:db:check | db:migrate | ingest | remember | context | status`.
+- Repo ingestion, decision/evidence memory, deterministic **BM25** scoring, compact context-pack
+  JSON (short excerpts, token-budgeted).
+- Claude `/dfc-context` skill; Codex wiring via `AGENTS.md`.
+- CI typecheck workflow.
+
+## Still planned
+
+- Document-chunk ingestion (beyond the `doc_chunk` placeholder).
+- Claude hook logs → SurrealDB import; Codex task summaries → `agent_run` / `tool_event`.
+- Verification/approval import into SurrealDB.
+- Graph schema, import, and query (graph storage/query is **not** implemented).
+- Vector embeddings and vector indexes (**not** implemented).
+- Hybrid BM25 + vector + graph retrieval.
+- Full Claude memory skill suite.
+- Efficiency benchmark before any token-savings claim.
+
+## Validation
+
+- The first SurrealDB memory slice was **live-validated in the `dev-flow-control-codex` fork**
+  (PR #1, merged).
+- In the canonical repo this PR is validated by `pnpm install` + `pnpm exec tsc --noEmit`.
+- **Live Claude Code plugin install + hook-payload validation is still pending**, and is required
+  before relying on the layer inside a real plugin session.
+- No token/efficiency improvement is claimed until the benchmark is run.
