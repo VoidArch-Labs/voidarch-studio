@@ -1,0 +1,12 @@
+{
+  "_comment": "OPTIONAL — not enabled by default. The plugin's DEFAULT for Context7 is CLI + Skill mode (see context7.cli-skill-notes.md), which is lower-overhead. Use this MCP server only if you prefer it. Read-only docs retrieval; queries need no approval. CONTEXT7_API_KEY is optional (raises rate limits). Verify the URL/transport against current Context7 docs before use.",
+  "mcpServers": {
+    "context7": {
+      "type": "http",
+      "url": "https://mcp.context7.com/mcp",
+      "headers": {
+        "CONTEXT7_API_KEY": "${CONTEXT7_API_KEY}"
+      }
+    }
+  }
+}

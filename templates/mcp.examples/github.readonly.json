@@ -1,0 +1,14 @@
+{
+  "_comment": "This is the conservative default already shipped in the plugin's .mcp.json. GitHub MCP is READ-ONLY (X-MCP-Readonly: true). Writes are additionally gated by mcp-write-gate.sh. Set GITHUB_MCP_PAT to a read-only token; if unset, the server simply does not connect.",
+  "mcpServers": {
+    "github": {
+      "type": "http",
+      "url": "https://api.githubcopilot.com/mcp/",
+      "headers": {
+        "Authorization": "Bearer ${GITHUB_MCP_PAT}",
+        "X-MCP-Readonly": "true",
+        "X-MCP-Toolsets": "repos,issues,pull_requests,actions,code_security"
+      }
+    }
+  }
+}

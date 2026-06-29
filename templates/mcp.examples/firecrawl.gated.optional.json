@@ -1,0 +1,13 @@
+{
+  "_comment": "OPTIONAL and GATED — not enabled by default. firecrawl_search and single-URL firecrawl_scrape are allowed; crawl / map / extract / agent are blocked by mcp-write-gate.sh and require a scoped approval under .agent-runs/approvals/. FIRECRAWL_API_KEY is required for hosted/paid modes (subscription-first: enabling paid modes requires explicit user approval). Verify the launch command against current Firecrawl MCP docs.",
+  "mcpServers": {
+    "firecrawl": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "firecrawl-mcp"],
+      "env": {
+        "FIRECRAWL_API_KEY": "${FIRECRAWL_API_KEY}"
+      }
+    }
+  }
+}

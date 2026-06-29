@@ -1,0 +1,16 @@
+{
+  "_comment": "Example SCOPED APPROVAL RECORD. Copy into .agent-runs/approvals/<name>.json (global) or .agent-runs/sessions/<session-id>/approvals/<name>.json (session-scoped) to authorize a single gated action. The hooks check these BEFORE the deprecated broad flags. Keep tool_pattern as narrow as possible. expires_at is compared lexically as UTC ISO-8601 (use the Z suffix). single_use approvals are consumed on first match (a sibling <name>.json.consumed marker is written).",
+  "approval_id": "example-id-replace-me",
+  "approved_by": "user",
+  "created_at": "2026-06-28T00:00:00Z",
+  "expires_at": "2026-06-29T00:00:00Z",
+  "single_use": true,
+  "tool_pattern": "mcp__gitkraken__*create_pr*",
+  "action": "create PR",
+  "scope": {
+    "repo": "",
+    "branch": "",
+    "files": []
+  },
+  "reason": "Approved opening a PR for the current feature branch."
+}

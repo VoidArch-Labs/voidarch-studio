@@ -1,0 +1,15 @@
+# Runtime observability + session state + scoped approvals (created in target repos at session time)
+# Includes .agent-runs/sessions/<id>/, .agent-runs/approvals/, consumed markers, and graph output.
+.agent-runs/
+
+# DEPRECATED broad approval override flags (honored only with DFC_ALLOW_LEGACY_FLAGS=1; unsafe).
+# Prefer scoped approval records under .agent-runs/approvals/. Never commit these.
+.allow-protected-edits
+.allow-dependency-changes
+.allow-destructive-shell
+.allow-mcp-writes
+.strict-verify
+
+# OS / editor cruft
+.DS_Store
+*.swp

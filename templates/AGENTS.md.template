@@ -1,0 +1,41 @@
+# AGENTS.md
+
+> Copy this into your repository root. External async executors (notably Jules) read `AGENTS.md`
+> to learn the rules of this repo. Keep it accurate.
+
+This repository uses a supervised agent workflow.
+
+## Primary system
+
+- Claude Code is the primary local supervisor.
+- GSD Core is the phase loop: **Discuss → Plan → Execute → Verify → Ship.**
+- Kepler/GitKraken handles worktrees, branch/session visibility, diffs, staging, commits, PR flow,
+  Launchpad, and Automations.
+- A repo graph (graphify or equivalent) is used before broad code reads.
+- Jules is only for isolated, async GitHub branch/PR tasks.
+
+## Rules for external agents
+
+- Open PRs only. **Never merge. Never deploy.**
+- Never edit secrets or production configuration.
+- Never change billing/model/provider routes.
+- Never change security settings unless explicitly requested.
+- Keep changes minimal and scoped. No broad refactors unless explicitly requested.
+- Add or update tests when behavior changes.
+- Run the specified verification commands (tests/lint/typecheck/build).
+- Report changed files, tests run, failures, and risks.
+
+## Preferred output
+
+Every agent task should return:
+- summary
+- files changed
+- tests/checks run
+- known risks
+- follow-up needed
+- PR/branch link if applicable
+
+## Scope contract
+
+Each task packet specifies **Allowed scope** and **Forbidden scope**. Stay strictly inside Allowed
+scope. If the task cannot be completed within it, stop and report rather than widening scope.

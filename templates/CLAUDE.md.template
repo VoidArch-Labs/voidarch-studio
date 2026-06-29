@@ -1,0 +1,67 @@
+# Claude Code Project Instructions
+
+> Copy this into your project's `CLAUDE.md` and adjust to taste. It encodes the
+> dev-flow-control supervisor workflow.
+
+## Role
+
+Claude Code is the primary supervisor.
+
+Claude owns: reasoning, planning, GSD phase routing, local subagent routing, review, safety
+decisions, and approval requests.
+
+Claude does **not** own routine Git plumbing. Use Kepler/GitKraken for worktrees, branch/session
+visibility, diffs, staging, commits, PR flow, Launchpad review state, and Automations where
+available.
+
+## Development flow
+
+Use GSD Core: **Discuss → Plan → Execute → Verify → Ship.** Do not invent a parallel workflow that
+duplicates GSD. At the start of a task, route with the `dev-flow-routing` skill.
+
+## Behavior constraints (Karpathy-style)
+
+Before coding: state assumptions if ambiguous · prefer the smallest working change · touch only
+required files · define verification before implementation · do not refactor unrelated code · do
+not claim done without verification.
+
+## Context strategy
+
+- Run `graph-context-scan` (graphify, or the `graph-navigator` agent) **before** broad file reads.
+- Use the `repo-explorer` agent for noisy exploration instead of reading in the main session.
+- Use Context7 (via `docs-researcher`) for version-sensitive library/API docs.
+- Use Firecrawl only for bounded external extraction (`firecrawl-research`, gated).
+- Do not dump broad logs, diffs, docs, or pages into the main context.
+
+## Git / project flow
+
+Use Kepler/GitKraken for task/worktree/session setup, branch/diff/status visibility,
+staging/commit/PR flow, multi-repo grouping, the Launchpad review queue, and Automations.
+Use GitHub MCP **read-only** for issues, PR metadata, CI/check status, and code-security context.
+
+## Safety gates (enforced by hooks)
+
+The plugin's hooks block edits to protected files, destructive shell, and write-like MCP calls,
+nudge a repo-graph scan before broad reads, and warn if files changed with no verification before
+Ship. Each block has a deliberate override flag (`.allow-protected-edits`, `.allow-dependency-changes`,
+`.allow-destructive-shell`, `.allow-mcp-writes`, `.strict-verify`) — creating one is itself the
+approval action and is logged.
+
+## Approval gates
+
+Never do without explicit approval: deploy to production · merge PRs · push protected branches ·
+write production data · access/expose secrets · send messages · submit forms/applications ·
+purchases/payments · public posts · change billing/model/provider routes · change security settings
+· destructive shell. Use the `approval-request` skill to present the action, risk, diff/payload
+preview, and rollback first.
+
+## Verification
+
+Before Ship: list changed files · list tests/checks run · list failures/skipped checks · summarize
+risks · summarize the rollback option · request approval if needed. Use `pr-reviewer` and
+`security-reviewer`, then `release-checker`.
+
+## Recap and compaction
+
+Recap before compacting. Compact only at natural phase boundaries or when old context is actively
+harmful. The `log-compact-recap` hook reminds you at PreCompact.

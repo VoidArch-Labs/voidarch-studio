@@ -1,0 +1,11 @@
+{
+  "_comment": "OPTIONAL / PLACEHOLDER — not enabled by default. The concrete Graphify MCP server name and launch command are NOT confirmed (see templates/docs/graph-index-flow.md and templates/docs/research-gaps.md). DO NOT invent a command. If the real Graphify command/MCP is unknown, leave this disabled: the plugin records graph integration as UNAVAILABLE and falls back to repo-explorer search (grep/glob). If you have a real graph/index tool (graphify, RepoGraph, RIG, a tree-sitter index, a Sourcegraph-like search, or a vector/hybrid index), point GRAPH_INDEX_TOOL / GRAPH_INDEX_COMMAND at it instead.",
+  "mcpServers": {
+    "graphify": {
+      "type": "stdio",
+      "command": "REPLACE_WITH_GRAPHIFY_OR_EQUIVALENT_COMMAND",
+      "args": [],
+      "env": {}
+    }
+  }
+}

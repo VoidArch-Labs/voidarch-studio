@@ -1,0 +1,11 @@
+{
+  "_comment": "OPTIONAL — not enabled by default. GitKraken/Kepler MCP provides Git state and workflow context. GitKraken/Kepler OWNS Git workflow state, but write-like GitKraken actions (commit, push, merge, create_pr, stage, discard, reset, cleanup, work_end, ...) are gated by mcp-write-gate.sh and require a scoped approval under .agent-runs/approvals/. Read-only GitKraken tools (status, graph, log, diff, blame, list) stay allowed. Replace command/args with your actual GitKraken MCP launch per https://www.gitkraken.com/mcp. Verify before use.",
+  "mcpServers": {
+    "GitKraken": {
+      "type": "stdio",
+      "command": "gk",
+      "args": ["mcp"],
+      "env": {}
+    }
+  }
+}
