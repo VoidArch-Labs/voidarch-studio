@@ -12,6 +12,10 @@
     "dfc:remember": "tsx scripts/dfc-remember.ts",
     "dfc:context": "tsx scripts/dfc-context-pack.ts",
     "dfc:status": "tsx scripts/dfc-status.ts",
+    "dfc:import-runs": "tsx scripts/dfc-import-runs.ts",
+    "dfc:log-run": "tsx scripts/dfc-log-run.ts",
+    "dfc:log-tool": "tsx scripts/dfc-log-tool.ts",
+    "dfc:validate-hooks": "bash scripts/dfc-validate-hooks.sh",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
