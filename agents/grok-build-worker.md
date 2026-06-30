@@ -29,12 +29,17 @@ deploy, never touch secrets, never widen scope silently, verify before claiming 
    here — report it).
 
 **Process:**
-1. `pnpm dfc:grok-build --mode <mode> --task "<bounded task>" [--repo-root <path>] [--allow-writes] [--verify]`
+1. Run via the Bash tool with an explicit timeout of at least 120000ms — Grok CLI startup plus
+   model response routinely takes 10-60+ seconds:
+   `pnpm dfc:grok-build --mode <mode> --task "<bounded task>" [--repo-root <path>] [--allow-writes] [--verify]`
 2. If it exits non-zero: read the printed guidance (missing/unauthenticated Grok CLI, active
    cooldown, bad arguments) and relay it plainly — do not retry blindly, and never pass `--force`
    without the user asking to bypass the cooldown.
 3. Read the run summary JSON under `.agent-runs/grok/runs/` for the session ID, model, and
-   redacted text preview.
+   redacted text preview. **Exit code `0` only means the wrapper subprocess ran cleanly — it does
+   not mean Grok finished the task.** Check `stopReason` too: a `Cancelled` stop with empty
+   `textPreview` is an interrupted run, not a result — report it as incomplete and offer to retry,
+   never relay it as Grok's answer.
 
 **Output format:**
 - Mode used + task given to Grok
