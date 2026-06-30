@@ -83,12 +83,16 @@ Canonical naming applied (fork → canonical): package `dev-flow-control-codex` 
   JSON (short excerpts, token-budgeted).
 - Claude `/dfc-context` skill; Codex wiring via `AGENTS.md`.
 - CI typecheck workflow.
+- **Run import bridge**: `dfc:import-runs` / `dfc:log-run` / `dfc:log-tool` import local
+  `.agent-runs` logs into `tool_event` / `agent_run` / `verification_run` / `approval`
+  (content-hash dedupe + secret redaction; dry-run needs no DB). See
+  [`postmerge-validation-and-roadmap.md`](postmerge-validation-and-roadmap.md).
 
 ## Still planned
 
 - Document-chunk ingestion (beyond the `doc_chunk` placeholder).
-- Claude hook logs → SurrealDB import; Codex task summaries → `agent_run` / `tool_event`.
-- Verification/approval import into SurrealDB.
+- Live DB import of `.agent-runs` (bridge is implemented + dry-run-validated; a live
+  `pnpm dfc:import-runs` run needs `.dfc/surreal.env`).
 - Graph schema, import, and query (graph storage/query is **not** implemented).
 - Vector embeddings and vector indexes (**not** implemented).
 - Hybrid BM25 + vector + graph retrieval.
@@ -100,6 +104,10 @@ Canonical naming applied (fork → canonical): package `dev-flow-control-codex` 
 - The first SurrealDB memory slice was **live-validated in the `dev-flow-control-codex` fork**
   (PR #1, merged).
 - In the canonical repo this PR is validated by `pnpm install` + `pnpm exec tsc --noEmit`.
-- **Live Claude Code plugin install + hook-payload validation is still pending**, and is required
-  before relying on the layer inside a real plugin session.
+- **Post-merge** (branch `postmerge/live-plugin-memory-validation`): plugin manifest validated via
+  `claude plugin validate` (✔, Claude Code 2.1.62); **39/39 hook cases pass**
+  (`pnpm dfc:validate-hooks`); graphify graph refreshed (523 nodes); run import bridge dry-run
+  validated. A full *nested* plugin session is blocked by Claude Code's `CLAUDECODE` guard — run
+  `claude --plugin-dir <repo>` interactively. See
+  [`postmerge-validation-and-roadmap.md`](postmerge-validation-and-roadmap.md).
 - No token/efficiency improvement is claimed until the benchmark is run.
