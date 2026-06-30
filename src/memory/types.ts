@@ -1,7 +1,7 @@
 // Shared types for the dev-flow-control SurrealDB dev-memory slice.
 
 export type MemoryKind = "decision" | "evidence";
-export type SourceAgent = "manual" | "codex" | "claude";
+export type SourceAgent = "manual" | "codex" | "claude" | "grok-build";
 export type Phase = "discuss" | "plan" | "execute" | "verify" | "ship";
 
 /** Resolved connection + scope configuration (env overrides the .dfc files). */
