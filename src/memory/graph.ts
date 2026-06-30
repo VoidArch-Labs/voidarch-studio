@@ -225,9 +225,10 @@ export interface ImportGraphStats {
 /** Replace the repo's graph rows with this plan; append snapshot + import_run. */
 export async function importGraph(db: Surreal, plan: GraphPlan): Promise<ImportGraphStats> {
   const repo = plan.snapshot.repo_id;
-  for (const t of ["graph_node", "graph_edge", "graph_hyperedge"]) {
-    await queryResults(db, `DELETE type::table($t) WHERE repo_id = $repo`, { t, repo });
-  }
+  // Literal table names (matches the proven DELETE pattern in docs.ts / vectors.ts).
+  await queryResults(db, `DELETE graph_node WHERE repo_id = $repo`, { repo });
+  await queryResults(db, `DELETE graph_edge WHERE repo_id = $repo`, { repo });
+  await queryResults(db, `DELETE graph_hyperedge WHERE repo_id = $repo`, { repo });
   for (const n of plan.nodes) {
     await db.create(new Table("graph_node")).content(n as unknown as Record<string, unknown>);
   }
