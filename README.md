@@ -104,10 +104,15 @@ scoring and a token budget; any unavailable channel degrades to an empty array.
 live. The paid path (`openai`) **also** needs `OPENAI_API_KEY` **and** approval
 (`DFC_EMBED_APPROVED=1` or `--approve`) — paid APIs are never called silently.
 
-**Still pending:** live canonical SurrealDB validation (needs credentials); interactive
-plugin-session test (`claude --plugin-dir .`); efficiency benchmark before any token-savings
-claim. To run live validation see
-[`docs/postmerge-validation-and-roadmap.md`](docs/postmerge-validation-and-roadmap.md).
+**Live-validated (2026-06-30):** against the canonical hosted SurrealDB instance —
+`db:migrate` (incl. `schema/0003`), `ingest` (91 files), `docs:ingest` (40 docs / 239
+chunks), `graph:import` (663 nodes / 1122 edges), `context` (hybrid pack: files + symbols +
+graph + doc chunks), `status`, `memory:doctor`, `memory:gc`. See
+[`docs/postmerge-validation-and-roadmap.md`](docs/postmerge-validation-and-roadmap.md) §3b.
+
+**Still pending:** interactive plugin-session test (`claude --plugin-dir .`, blocked here by
+the nested-session guard); live embedding (needs an explicit, approved provider); efficiency
+benchmark before any token-savings claim.
 
 ## Architecture
 

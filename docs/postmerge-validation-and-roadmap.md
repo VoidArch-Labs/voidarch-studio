@@ -140,11 +140,35 @@ Add embeddings as **one** retrieval channel in a hybrid ranker.
 
 ---
 
+## 3b. Live validation results (2026-06-30)
+
+Run against the canonical hosted SurrealDB instance (namespace `dev_flow_control`,
+database `repo_dev_flow_control`, root auth). Every command exited 0:
+
+| Step | Result |
+| --- | --- |
+| `dfc:db:check` | **CONNECTED** (read query returned 1) |
+| `dfc:db:migrate` | applied 0001 + 0002 + **0003** cleanly (idempotent, non-destructive) |
+| `dfc:ingest` | 91 files ingested (98 scanned) |
+| `dfc:docs:ingest` | 40 documents → **239 doc_chunk rows** (3 deduped) |
+| `graphify update .` | 663 nodes / 1122 edges / 60 communities (fresh at HEAD) |
+| `dfc:graph:import` | **663 nodes + 1122 edges + 6 hyperedges**; snapshot `fresh=true` |
+| `dfc:import-runs --limit 50` | nothing to import (no `.agent-runs` activity) |
+| `dfc:context` | hybrid pack: **29 files + 8 symbols + 1 graph edge + 7 doc chunks**, 3195 tokens (vectors empty — no provider) |
+| `dfc:status` | repo 1, file 91, document 40, doc_chunk 239, graph_snapshot 1, graph_node 663, graph_edge 1122, embedding_* 0 |
+| `dfc:memory:doctor` | DB section populated; gc orphans 0, mismatched 0 |
+| `dfc:memory:gc --dry-run` | 0 orphans, 0 mismatched |
+
+Live **embedding was NOT run** — no embedding provider is configured/approved (the approval
+gate held; the vector tables exist but are empty by design). Credentials lived only in
+gitignored `.dfc/surreal.env` (perms 600); no secret was printed or committed. The original
+connection failure was a malformed URL (`wss:///host` triple-slash → empty authority),
+corrected to `wss://host`; once fixed, the host resolved and `/health` returned 200.
+
 ## 4. What remains after this layer
 
-- **Live canonical SurrealDB validation** — all stages above are dry-run + typecheck
-  validated, but no live run has executed (no credentials present this session). Run the
-  block in §3 once `.dfc/surreal.env` exists.
+- ~~Live canonical SurrealDB validation~~ — **DONE 2026-06-30** (see §3b): migrate + ingest +
+  docs + graph + context + status all passed against the hosted instance.
 - **Interactive plugin-session test** — `claude --plugin-dir .` to confirm the seven
   `/dfc-*` skills are offered and hooks fire (blocked here by the nested-session guard).
 - **Live embedding** — only with an explicit, approved provider; choose dimension + model,
