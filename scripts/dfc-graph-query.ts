@@ -1,0 +1,96 @@
+// dfc:graph:query — rank graph nodes for a query + show their neighborhood edges.
+//
+//   pnpm dfc:graph:query --q "SurrealDB context pack" --dry-run  # local graph.json
+//   pnpm dfc:graph:query --q "approval gate"                     # SurrealDB (BM25 + degree)
+//   pnpm dfc:graph:query --q "hooks" --limit 8 --json            # machine output
+
+import {
+  buildGraphPlan,
+  currentGitCommit,
+  findGraphFile,
+  loadGraph,
+  queryGraph,
+  queryGraphLocal,
+  type GraphQueryResult,
+} from "../src/memory/graph.js";
+import { normalizeSourceAgent } from "../src/memory/agents.js";
+import { REPO_ROOT, loadConfig, withDb } from "../src/memory/surreal.js";
+
+function parseArgs(argv: string[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a && a.startsWith("--")) {
+      const key = a.slice(2);
+      const next = argv[i + 1];
+      if (next === undefined || next.startsWith("--")) out[key] = "true";
+      else {
+        out[key] = next;
+        i++;
+      }
+    }
+  }
+  return out;
+}
+
+function printResult(r: GraphQueryResult, dryRun: boolean): void {
+  console.log(`dfc:graph:query ${dryRun ? "(DRY RUN — local graph.json)" : "(SurrealDB)"}`);
+  if (!r.nodes.length) {
+    console.log("  (no matching graph nodes)");
+    return;
+  }
+  console.log("  nodes:");
+  for (const n of r.nodes) {
+    console.log(`    [${n.score.toFixed(2)}] ${n.label} (${n.kind}, deg ${n.degree}) — ${n.source_file}${n.source_location ? `:${n.source_location}` : ""}`);
+  }
+  if (r.edges.length) {
+    console.log("  neighborhood edges:");
+    for (const e of r.edges.slice(0, 12)) {
+      console.log(`    [${e.score.toFixed(2)}] ${e.src} --${e.relation}--> ${e.dst}`);
+    }
+  }
+}
+
+async function main(): Promise<void> {
+  const args = parseArgs(process.argv.slice(2));
+  const q = (args.q || "").trim();
+  const dryRun = args["dry-run"] === "true";
+  const asJson = args.json === "true";
+  const limit = args.limit ? Math.max(1, Number.parseInt(args.limit, 10) || 10) : 10;
+  if (!q) {
+    console.error("--q is required");
+    process.exit(2);
+  }
+  const root = process.env.CLAUDE_PROJECT_DIR || REPO_ROOT;
+
+  let result: GraphQueryResult;
+  if (dryRun) {
+    const file = findGraphFile(root);
+    if (!file) {
+      console.error("dfc:graph:query — no graphify-out/graph.json found; run `/graphify` first.");
+      if (asJson) process.stdout.write(`${JSON.stringify({ nodes: [], edges: [] })}\n`);
+      return;
+    }
+    const plan = buildGraphPlan(
+      loadGraph(file),
+      loadConfig().repoId,
+      normalizeSourceAgent(args.agent),
+      currentGitCommit(root),
+      new Date().toISOString(),
+    );
+    result = queryGraphLocal(plan, q, limit);
+  } else {
+    result = await withDb(async (db) => queryGraph(db, loadConfig().repoId, q, limit));
+  }
+
+  if (asJson) {
+    process.stdout.write(`${JSON.stringify(result)}\n`);
+    return;
+  }
+  printResult(result, dryRun);
+}
+
+main().catch((err) => {
+  console.error((err as Error)?.message ?? String(err));
+  process.exit(1);
+});

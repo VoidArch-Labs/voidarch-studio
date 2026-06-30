@@ -111,3 +111,9 @@ Canonical naming applied (fork → canonical): package `dev-flow-control-codex` 
   `claude --plugin-dir <repo>` interactively. See
   [`postmerge-validation-and-roadmap.md`](postmerge-validation-and-roadmap.md).
 - No token/efficiency improvement is claimed until the benchmark is run.
+- **docs/graph/vector substrate** (branch `memory/docs-graph-vector-substrate`): document,
+  graph, and vector memory channels + hybrid context-pack retrieval + seven Claude memory
+  skills are implemented and **dry-run + typecheck validated**. Migration `schema/0003` is
+  idempotent/non-destructive. Live SurrealDB validation is pending credentials; live embedding
+  is pending an explicit, approved provider. See
+  [`postmerge-validation-and-roadmap.md`](postmerge-validation-and-roadmap.md).

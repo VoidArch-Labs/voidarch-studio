@@ -78,6 +78,38 @@ once `.dfc/surreal.env` exists; an optional `schema/0003` dedupe index on
 Storage stays **SurrealDB**. Retrieval stays **token-budgeted**. Each stage adds a
 channel; none replaces BM25 or the graph.
 
+> **✅ DELIVERED** in branch `memory/docs-graph-vector-substrate` (PR #3). All three
+> stages below are implemented, typecheck-clean, and dry-run validated. As-built notes:
+>
+> | Stage | As-built commands | Tables | Notes |
+> | --- | --- | --- | --- |
+> | 1 docs | `dfc:docs:ingest`, `dfc:docs:query` | `document` + reused `doc_chunk` (BM25 from 0002) | heading-first chunking, content-hash dedupe, idempotent (unchanged files skipped); `--dry-run` chunks + scores locally |
+> | 2 graph | `dfc:graph:import`, `dfc:graph:query`, `dfc:graph:status` | `graph_snapshot/node/edge/hyperedge`, `graph_import_run` | unified node(`kind`)/edge(`relation`) model maps graphify node-link JSON; the producer is `/graphify` (the roadmap's `dfc:graph:index`); freshness = `built_at_commit` vs HEAD |
+> | 3 vectors | `dfc:embed`, `dfc:memory:doctor`, `dfc:memory:gc` | `embedding_model`, `embedding_chunk` | explicit provider, paid path gated; dimension-agnostic schema + JS cosine; dedupe by content hash; **off by default** |
+>
+> Schema: [`schema/0003_documents_graph_vectors.surql`](../schema/0003_documents_graph_vectors.surql)
+> (idempotent, non-destructive). Hybrid retrieval lives in
+> [`src/memory/context-pack.ts`](../src/memory/context-pack.ts) — `repo_context.{symbols,graph_neighborhood}`,
+> `document_context.chunks`, `vector_context.chunks` added behind graceful degradation.
+>
+> **What is implemented vs gated:**
+> - *Implemented now (typecheck + dry-run):* all code paths above + the seven `.claude/skills/dfc-*`.
+> - *Dry-run only (no creds):* `*:ingest/query/status --dry-run`, `dfc:embed --dry-run`, `dfc:memory:doctor`, `dfc:memory:gc --dry-run`.
+> - *Requires SurrealDB credentials:* every live ingest/import/query/status + `dfc:db:migrate`.
+> - *Requires explicit embedding provider:* `dfc:embed` live; the `openai` path also requires `OPENAI_API_KEY` **and** approval.
+>
+> **Run live validation** once `.dfc/surreal.env` exists (URL + user + pass + ns/db):
+> ```bash
+> pnpm dfc:db:check && pnpm dfc:db:migrate
+> pnpm dfc:ingest --agent claude && pnpm dfc:docs:ingest --agent claude
+> pnpm dfc:graph:import --agent claude        # after /graphify
+> pnpm dfc:import-runs --agent claude --limit 50
+> pnpm dfc:context --task "Final live validation of docs graph vector memory substrate" --agent claude
+> pnpm dfc:status
+> # vectors only with an explicit, approved provider:
+> # DFC_EMBED_PROVIDER=ollama pnpm dfc:embed --limit 25
+> ```
+
 ### Stage 1 — docs / chunks
 
 Populate the reserved `doc_chunk` table so prose (not just whole files) is retrievable.
@@ -110,6 +142,12 @@ Add embeddings as **one** retrieval channel in a hybrid ranker.
 
 ## 4. What remains after this layer
 
-- Live DB import + read-only DB check once credentials exist (Stages above need a DB).
+- **Live canonical SurrealDB validation** — all stages above are dry-run + typecheck
+  validated, but no live run has executed (no credentials present this session). Run the
+  block in §3 once `.dfc/surreal.env` exists.
+- **Interactive plugin-session test** — `claude --plugin-dir .` to confirm the seven
+  `/dfc-*` skills are offered and hooks fire (blocked here by the nested-session guard).
+- **Live embedding** — only with an explicit, approved provider; choose dimension + model,
+  optionally add a per-model MTREE index for KNN (the 0003 schema is dimension-agnostic).
 - Doc-level semantic graph re-extraction (`/graphify --update` or set `GEMINI_API_KEY`).
 - Efficiency benchmark before any token-savings claim (unchanged from prior spec).

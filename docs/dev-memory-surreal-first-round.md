@@ -171,3 +171,13 @@ pnpm dfc:remember --kind decision --text "Codex and Claude share the same per-re
 pnpm dfc:context --task "Finish approval logging" --agent codex
 pnpm dfc:status
 ```
+
+## Second Round — docs / graph / vector substrate
+
+This first-round file/decision/evidence slice has since been extended (branch
+`memory/docs-graph-vector-substrate`) with three more retrieval channels — **document
+chunks** (`dfc:docs:*`), **graph facts** (`dfc:graph:*`), and **vector embeddings**
+(`dfc:embed`, approval-gated) — fused into the same `dfc:context` pack under one token
+budget. All are typecheck + dry-run validated; live SurrealDB validation runs with the same
+credential setup as above (plus `pnpm dfc:db:migrate` now applies `schema/0003`). Details:
+[`postmerge-validation-and-roadmap.md`](postmerge-validation-and-roadmap.md).

@@ -12,7 +12,11 @@ import {
   REPO_ROOT,
 } from "../src/memory/surreal.js";
 
-const MIGRATIONS = ["schema/0001_core.surql", "schema/0002_indexes.surql"];
+const MIGRATIONS = [
+  "schema/0001_core.surql",
+  "schema/0002_indexes.surql",
+  "schema/0003_documents_graph_vectors.surql",
+];
 
 function ident(name: string, label: string): string {
   if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {

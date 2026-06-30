@@ -5,10 +5,14 @@
 import type { Surreal } from "surrealdb";
 import type {
   ContextAgentRunEntry,
+  ContextDocChunkEntry,
   ContextFileEntry,
+  ContextGraphEdgeEntry,
   ContextMemoryEntry,
   ContextPack,
+  ContextSymbolEntry,
   ContextToolEventEntry,
+  ContextVectorChunkEntry,
   Phase,
 } from "./types.js";
 import {
@@ -22,8 +26,13 @@ import {
   tokenize,
 } from "./scoring.js";
 import { queryResult } from "./surreal.js";
+import { queryDocChunks } from "./docs.js";
+import { neighborhoodEdges, queryGraphNodes } from "./graph.js";
+import { queryVectors, resolveEmbedConfig } from "./vectors.js";
 
-const TARGET_TOKENS = 2500;
+// Slightly higher than the file-only era to leave room for the hybrid channels;
+// greedy budgeting still drops the lowest-priority items past this ceiling.
+const TARGET_TOKENS = 3200;
 
 /** Map a detected risk keyword to the human-readable gated action it implies. */
 const RISK_TO_ACTION: Record<string, string> = {
@@ -294,6 +303,41 @@ export async function buildContextPack(
   const recentRuns = await fetchAgentRuns(db, repoId, terms, riskTerms, now);
   const recentToolEvents = await fetchToolEvents(db, repoId, terms, riskTerms, now);
 
+  // --- hybrid retrieval channels (graceful: empty/absent tables degrade to []) ---
+  let docChunks: ContextDocChunkEntry[] = [];
+  try {
+    docChunks = await queryDocChunks(db, repoId, goal, 8);
+  } catch {
+    docChunks = [];
+  }
+
+  let symbols: ContextSymbolEntry[] = [];
+  let graphEdges: ContextGraphEdgeEntry[] = [];
+  try {
+    const hits = await queryGraphNodes(db, repoId, terms, riskTerms, 8);
+    symbols = hits.map((h) => ({
+      label: h.label,
+      kind: h.kind,
+      source_file: h.source_file,
+      source_location: h.source_location,
+      score: h.score,
+    }));
+    graphEdges = await neighborhoodEdges(db, repoId, hits.map((h) => h.node_key), 12);
+  } catch {
+    symbols = [];
+    graphEdges = [];
+  }
+
+  // Vector channel is optional and only runs when an embedding provider is available
+  // (it must embed the query). No provider → no vector context, no error.
+  let vectorChunks: ContextVectorChunkEntry[] = [];
+  try {
+    const embedCfg = resolveEmbedConfig();
+    if (embedCfg.available) vectorChunks = await queryVectors(db, embedCfg, repoId, goal, 6);
+  } catch {
+    vectorChunks = [];
+  }
+
   // --- recent verification failures ---
   const verificationRows = await queryResult<Array<{ summary: string; failures: unknown }>>(
     db,
@@ -333,7 +377,9 @@ export async function buildContextPack(
   const dropped: string[] = [];
   const pack: ContextPack = {
     task: { goal, phase },
-    repo_context: { files: [] },
+    repo_context: { files: [], symbols: [], graph_neighborhood: [] },
+    document_context: { chunks: [] },
+    vector_context: { chunks: [] },
     memory_context: { decisions: [], evidence: [] },
     verification: { last_failures: lastFailures.slice(0, 5) },
     workflow: { approval_required: approvalRequired, approval_available: approvalAvailable },
@@ -358,6 +404,24 @@ export async function buildContextPack(
     pack.repo_context.files.push(f);
     tokens += cost;
   }
+  for (const s of symbols) {
+    const cost = estimateTokens(`${s.label} ${s.source_file}`);
+    if (tokens + cost > TARGET_TOKENS) {
+      dropped.push(`symbol:${s.label}`);
+      continue;
+    }
+    pack.repo_context.symbols.push(s);
+    tokens += cost;
+  }
+  for (const dc of docChunks) {
+    const cost = estimateTokens(`${dc.source_path} ${dc.excerpt}`);
+    if (tokens + cost > TARGET_TOKENS) {
+      dropped.push(`doc:${dc.source_path}#${dc.chunk_index}`);
+      continue;
+    }
+    pack.document_context.chunks.push(dc);
+    tokens += cost;
+  }
   for (const d of decisions) {
     const cost = estimateTokens(d.summary);
     if (tokens + cost > TARGET_TOKENS) {
@@ -374,6 +438,24 @@ export async function buildContextPack(
       continue;
     }
     pack.memory_context.evidence.push(e);
+    tokens += cost;
+  }
+  for (const ge of graphEdges) {
+    const cost = estimateTokens(`${ge.src} ${ge.relation} ${ge.dst}`);
+    if (tokens + cost > TARGET_TOKENS) {
+      dropped.push(`graph_edge:${ge.relation}`);
+      continue;
+    }
+    pack.repo_context.graph_neighborhood.push(ge);
+    tokens += cost;
+  }
+  for (const v of vectorChunks) {
+    const cost = estimateTokens(v.excerpt);
+    if (tokens + cost > TARGET_TOKENS) {
+      dropped.push(`vector:${v.source_id}`);
+      continue;
+    }
+    pack.vector_context.chunks.push(v);
     tokens += cost;
   }
   for (const r of recentRuns) {

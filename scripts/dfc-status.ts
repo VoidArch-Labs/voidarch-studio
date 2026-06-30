@@ -6,11 +6,18 @@ import type { Surreal } from "surrealdb";
 const COUNT_TABLES = {
   "Repo records": "repo",
   "File records": "file",
+  "Document records": "document",
+  "Doc chunks": "doc_chunk",
   "Decision records": "decision",
   "Evidence records": "evidence_item",
   "Context packs": "context_pack",
   "Agent runs": "agent_run",
   "Tool events": "tool_event",
+  "Graph snapshots": "graph_snapshot",
+  "Graph nodes": "graph_node",
+  "Graph edges": "graph_edge",
+  "Embedding models": "embedding_model",
+  "Embedding chunks": "embedding_chunk",
 } as const;
 
 async function countTable(db: Surreal, table: string): Promise<number> {

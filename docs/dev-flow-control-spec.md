@@ -317,9 +317,32 @@ later *feed* SurrealDB (e.g. PR metadata), but are not a dependency of the memor
 
 **SurrealDB is the single shared dev-memory backend. Agents reach it only through the repo-local
 `pnpm dfc:*` CLI — Claude Code via `/dfc-context`, Codex and future agents via `AGENTS.md`. One
-namespace, one database per repo, `repo_id` on every row. BM25 retrieval is live; graph, vector, and
-document memory are planned. Graphify/SCIP/Tree-sitter produce facts; SurrealDB stores them. Root
+namespace, one database per repo, `repo_id` on every row. BM25 retrieval is live; document, graph,
+and vector memory are implemented (dry-run + typecheck validated; live run pending credentials).
+Graphify/SCIP/Tree-sitter produce facts; SurrealDB stores them. Root
 auth bootstraps; scoped credentials run daily. Secrets stay in env or gitignored `.dfc/surreal.env`,
 and `DFC_SURREAL_PASS` is never printed or committed. The slice was validated in the Codex fork; the
 canonical Claude Code plugin still needs live install/hook validation, and no token-savings claim is
 made until the benchmark is run.**
+
+---
+
+## 17. Update — docs / graph / vector substrate (branch `memory/docs-graph-vector-substrate`)
+
+The three retrieval channels from §15.2 Acceptance B are now **implemented** (typecheck +
+dry-run validated; live SurrealDB run still pending credentials):
+
+- **Document memory** — `dfc:docs:ingest` / `dfc:docs:query` over heading-chunked markdown
+  in `doc_chunk` (parent `document`), reusing the 0002 BM25 index.
+- **Graph memory** — `dfc:graph:import` / `dfc:graph:query` / `dfc:graph:status` load
+  graphify's node-link JSON into a unified `graph_node`(kind) / `graph_edge`(relation) model
+  with snapshot freshness vs HEAD.
+- **Vector memory** — `dfc:embed` (approval-gated, explicit provider) + `dfc:memory:doctor`
+  / `dfc:memory:gc`, dimension-agnostic schema, deterministic JS cosine.
+- **Hybrid context pack** — `dfc:context` now fuses files + graph symbols + graph
+  neighborhood + document chunks + vector matches alongside the existing decision/evidence/run
+  channels, all under one token budget with graceful degradation.
+
+Migration `schema/0003_documents_graph_vectors.surql` is idempotent and non-destructive. The
+full substrate remains gated on live DB validation and (for vectors) an explicit, approved
+embedding provider. See [`postmerge-validation-and-roadmap.md`](postmerge-validation-and-roadmap.md).
