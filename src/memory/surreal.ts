@@ -14,7 +14,7 @@ const moduleDir = dirname(fileURLToPath(import.meta.url));
 export const REPO_ROOT = resolve(moduleDir, "..", "..");
 
 /** Minimal KEY=VALUE .env parser (no dependency). Ignores blanks and # comments. */
-function parseEnvFile(path: string): Record<string, string> {
+export function parseEnvFile(path: string): Record<string, string> {
   const out: Record<string, string> = {};
   if (!existsSync(path)) return out;
   for (const raw of readFileSync(path, "utf8").split(/\r?\n/)) {

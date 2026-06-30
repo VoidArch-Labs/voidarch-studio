@@ -11,10 +11,11 @@
 // migration is intentionally dimension-agnostic and defines no MTREE index).
 
 import { createHash } from "node:crypto";
+import { join } from "node:path";
 import { RecordId, type Surreal } from "surrealdb";
 import { buildDocPlan } from "./docs.js";
 import { cosineSimilarity } from "./scoring.js";
-import { queryResult, queryResults } from "./surreal.js";
+import { parseEnvFile, queryResult, queryResults, REPO_ROOT } from "./surreal.js";
 import type {
   ContextVectorChunkEntry,
   EmbeddingChunkRecord,
@@ -47,16 +48,29 @@ function defaultModel(p: EmbedProvider): string {
   return "";
 }
 
-/** Resolve embedding configuration from env (+ optional --approve). Pure. */
+function embedFileEnv(): Record<string, string> {
+  return parseEnvFile(join(REPO_ROOT, ".dfc", "embed.env"));
+}
+
+function getEmbedEnv(key: string, fileEnv = embedFileEnv()): string {
+  return (process.env[key] ?? fileEnv[key] ?? "").trim();
+}
+
+function supportsOpenAiDimensions(model: string): boolean {
+  return model.startsWith("text-embedding-3");
+}
+
+/** Resolve embedding configuration from process.env + .dfc/embed.env (+ optional --approve). */
 export function resolveEmbedConfig(opts?: { approve?: boolean }): EmbedConfig {
-  const provider = (process.env.DFC_EMBED_PROVIDER || "none").trim().toLowerCase() as EmbedProvider;
-  const model = (process.env.DFC_EMBED_MODEL || defaultModel(provider)).trim();
-  const dimension = Number.parseInt(process.env.DFC_EMBED_DIMENSION || "0", 10) || 0;
+  const fileEnv = embedFileEnv();
+  const provider = (getEmbedEnv("DFC_EMBED_PROVIDER", fileEnv) || "none").toLowerCase() as EmbedProvider;
+  const model = (getEmbedEnv("DFC_EMBED_MODEL", fileEnv) || defaultModel(provider)).trim();
+  const dimension = Number.parseInt(getEmbedEnv("DFC_EMBED_DIMENSION", fileEnv) || "0", 10) || 0;
   const paid = provider === "openai";
-  const apiKeyPresent = Boolean(process.env.OPENAI_API_KEY);
-  const approved = opts?.approve === true || process.env.DFC_EMBED_APPROVED === "1";
+  const apiKeyPresent = Boolean(getEmbedEnv("OPENAI_API_KEY", fileEnv));
+  const approved = opts?.approve === true || getEmbedEnv("DFC_EMBED_APPROVED", fileEnv) === "1";
   const host = (
-    process.env.DFC_EMBED_HOST ||
+    getEmbedEnv("DFC_EMBED_HOST", fileEnv) ||
     (provider === "ollama" ? "http://localhost:11434" : provider === "openai" ? "https://api.openai.com" : "")
   ).replace(/\/$/, "");
 
@@ -96,13 +110,16 @@ export async function embedText(cfg: EmbedConfig, text: string): Promise<number[
   }
   if (cfg.provider === "openai") {
     // Hard gate: never reach the paid API without key + approval.
-    if (!cfg.apiKeyPresent || !cfg.approved) {
+    const apiKey = getEmbedEnv("OPENAI_API_KEY");
+    if (!apiKey || !cfg.approved) {
       throw new Error("openai embeddings blocked: requires OPENAI_API_KEY and explicit approval");
     }
+    const body: { model: string; input: string; dimensions?: number } = { model: cfg.model, input: text };
+    if (cfg.dimension > 0 && supportsOpenAiDimensions(cfg.model)) body.dimensions = cfg.dimension;
     const res = await fetch(`${cfg.host}/v1/embeddings`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
-      body: JSON.stringify({ model: cfg.model, input: text }),
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify(body),
     });
     if (!res.ok) throw new Error(`openai embeddings HTTP ${res.status}`);
     const json = (await res.json()) as { data?: Array<{ embedding?: number[] }> };
@@ -195,13 +212,16 @@ export async function embedChunks(
   let dimension = cfg.dimension;
   const now = new Date().toISOString();
 
-  // If a model is already registered, its dimension is authoritative.
+  // If a model is already registered, its dimension is authoritative unless an
+  // OpenAI v3 model explicitly requested dimensions for this run.
   const registered = await queryResult<EmbeddingModelRecord[]>(
     db,
     `SELECT * FROM embedding_model WHERE repo_id = $repo AND provider = $p AND model = $m LIMIT 1`,
     { repo: repoId, p: cfg.provider, m: cfg.model },
   );
-  if (registered[0]?.dimension) dimension = registered[0].dimension;
+  const requestedOpenAiDimension =
+    cfg.provider === "openai" && supportsOpenAiDimensions(cfg.model) && cfg.dimension > 0;
+  if (registered[0]?.dimension && !requestedOpenAiDimension) dimension = registered[0].dimension;
 
   for (const t of targets) {
     let vec: number[];

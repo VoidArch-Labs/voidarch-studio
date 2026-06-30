@@ -17,9 +17,10 @@ graphify-out/
 node_modules/
 dist/
 
-# Hosted SurrealDB credentials. NEVER commit real values; keep only the template.
+# Local DFC credentials. NEVER commit real values; keep only templates.
 .dfc/*.env
 !.dfc/surreal.example.env
+!.dfc/embed.example.env
 
 # OS / editor cruft
 .DS_Store
