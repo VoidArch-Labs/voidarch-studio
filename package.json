@@ -23,6 +23,7 @@
     "dfc:embed": "tsx scripts/dfc-embed.ts",
     "dfc:memory:doctor": "tsx scripts/dfc-memory-doctor.ts",
     "dfc:memory:gc": "tsx scripts/dfc-memory-gc.ts",
+    "dfc:grok-build": "tsx scripts/dfc-grok-build.ts",
     "dfc:validate-hooks": "bash scripts/dfc-validate-hooks.sh",
     "typecheck": "tsc --noEmit"
   },
