@@ -279,13 +279,25 @@ function main(): void {
   }
 
   const prompt = buildPrompt(mode, task);
+  const permissionMode = allowWrites ? "acceptEdits" : "auto";
   const startedAt = new Date().toISOString();
-  const { exitCode, stdout, stderr, parsed, sessionId } = runGrok({
-    targetRepoRoot,
-    prompt,
-    model,
-    permissionMode: allowWrites ? "acceptEdits" : "auto",
-  });
+  // Grok occasionally cancels a turn outright (stopReason "Cancelled", exit 0, no real
+  // output) — observed live, intermittent, root cause not fully pinned down beyond the
+  // spawnSync stdin fix above. Retries reliably succeed in practice, so retry a couple of
+  // times before surfacing it as an interrupted run.
+  const MAX_CANCELLED_RETRIES = 2;
+  let attempt = runGrok({ targetRepoRoot, prompt, model, permissionMode });
+  let retries = 0;
+  while (
+    attempt.exitCode === 0 &&
+    attempt.parsed?.stopReason === "Cancelled" &&
+    retries < MAX_CANCELLED_RETRIES
+  ) {
+    retries++;
+    console.error(`dfc:grok-build — grok cancelled the turn, retrying (${retries}/${MAX_CANCELLED_RETRIES})...`);
+    attempt = runGrok({ targetRepoRoot, prompt, model, permissionMode });
+  }
+  const { exitCode, stdout, stderr, parsed, sessionId } = attempt;
   const finishedAt = new Date().toISOString();
 
   const combined = `${stdout}\n${stderr}`;
@@ -315,6 +327,7 @@ function main(): void {
     startedAt,
     finishedAt,
     exitCode,
+    retries,
     grokSessionId: parsed?.sessionId ?? null,
     stopReason: parsed?.stopReason ?? null,
     // Shared redact() is tuned for structured CLI/log text (KEY=value, Bearer <tok>) and can

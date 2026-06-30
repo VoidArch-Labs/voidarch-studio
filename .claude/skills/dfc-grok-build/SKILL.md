@@ -39,8 +39,11 @@ Notes:
   `pnpm dfc:grok-build --clear-cooldown`, or bypass once with `--force`.
 - If `grok` is missing or unauthenticated, the wrapper fails cleanly with install/`grok login`
   guidance — it never hangs waiting for interactive input.
+- Grok occasionally cancels a turn outright (intermittent, observed live — not fully root-caused
+  beyond fixing the most common trigger). The wrapper retries up to twice automatically before
+  giving up; the run summary's `retries` field shows how many it took.
 - Run summaries land under `.agent-runs/grok/runs/<session>.json` (gitignored, redacted/capped).
   **Always read the summary's `stopReason` and `textPreview` before reporting a result.** Exit
   code `0` means the wrapper subprocess ran cleanly — it does **not** mean Grok finished the
-  task. A `Cancelled` stop reason with empty `textPreview` means the run was interrupted; report
-  it as incomplete and offer to retry, never present it as a successful answer.
+  task. A `Cancelled` stop reason with empty `textPreview` (after retries) means the run was
+  genuinely interrupted; report it as incomplete, never present it as a successful answer.
