@@ -178,6 +178,7 @@ This first-round file/decision/evidence slice has since been extended (branch
 `memory/docs-graph-vector-substrate`) with three more retrieval channels — **document
 chunks** (`dfc:docs:*`), **graph facts** (`dfc:graph:*`), and **vector embeddings**
 (`dfc:embed`, approval-gated) — fused into the same `dfc:context` pack under one token
-budget. All are typecheck + dry-run validated; live SurrealDB validation runs with the same
-credential setup as above (plus `pnpm dfc:db:migrate` now applies `schema/0003`). Details:
+budget. All are typecheck validated, and the canonical hosted database was live-validated
+on 2026-06-30 with 239 document chunks and 239 OpenAI `text-embedding-3-small`
+embedding chunks at 1536 dimensions. Details:
 [`postmerge-validation-and-roadmap.md`](postmerge-validation-and-roadmap.md).

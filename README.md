@@ -77,7 +77,7 @@ into one token-budgeted context pack — none replaces BM25 or the graph:
 | Repo files (BM25) | `file` | `pnpm dfc:ingest` | via `/dfc-context` | implemented |
 | Document chunks (BM25) | `document`, `doc_chunk` | `pnpm dfc:docs:ingest` | `pnpm dfc:docs:query` | implemented |
 | Graph (graphify facts) | `graph_snapshot/node/edge/hyperedge` | `pnpm dfc:graph:import` | `pnpm dfc:graph:query`, `dfc:graph:status` | implemented |
-| Vectors (embeddings) | `embedding_model`, `embedding_chunk` | `pnpm dfc:embed` | folded into `/dfc-context` | scaffolding — **approval-gated**, off by default |
+| Vectors (embeddings) | `embedding_model`, `embedding_chunk` | `pnpm dfc:embed` | folded into `/dfc-context` | implemented + live-validated — **approval-gated**, off by default |
 | Runs / decisions / evidence | `agent_run`, `tool_event`, `decision`, `evidence_item` | `pnpm dfc:import-runs`, `pnpm dfc:remember` | via `/dfc-context` | implemented |
 
 `pnpm dfc:context` fuses all available channels (files + symbols + graph neighborhood +
@@ -89,9 +89,11 @@ scoring and a token budget; any unavailable channel degrades to an empty array.
 
 ### Dev-memory status
 
-**Implemented now (typecheck + dry-run validated):** document, graph, and vector
+**Implemented now (typecheck + live validated):** document, graph, and vector
 **code paths**; hybrid context-pack retrieval; the seven Claude memory skills; migration
-`schema/0003_documents_graph_vectors.surql`.
+`schema/0003_documents_graph_vectors.surql`. On 2026-06-30, the canonical hosted
+database held 239 `doc_chunk` rows, 1 `embedding_model`, and 239 `embedding_chunk`
+rows after a full approved OpenAI `text-embedding-3-small` run at 1536 dimensions.
 
 **Dry-run only (no credentials needed):** `dfc:docs:ingest --dry-run`,
 `dfc:docs:query --dry-run`, `dfc:graph:status --dry-run`, `dfc:graph:query --dry-run`,
@@ -104,9 +106,8 @@ scoring and a token budget; any unavailable channel degrades to an empty array.
 live. The paid path (`openai`) **also** needs `OPENAI_API_KEY` **and** approval
 (`DFC_EMBED_APPROVED=1` or `--approve`) — paid APIs are never called silently.
 
-**Still pending:** live canonical SurrealDB validation (needs credentials); interactive
-plugin-session test (`claude --plugin-dir .`); efficiency benchmark before any token-savings
-claim. To run live validation see
+**Still pending:** interactive plugin-session test (`claude --plugin-dir .`);
+efficiency benchmark before any token-savings claim. To rerun live validation see
 [`docs/postmerge-validation-and-roadmap.md`](docs/postmerge-validation-and-roadmap.md).
 
 ## Architecture
