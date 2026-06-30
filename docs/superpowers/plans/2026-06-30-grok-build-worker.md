@@ -859,7 +859,29 @@ inside dev-flow-control's own repo:
    writes is its whole point).
 
 All three fixed in commit `92a98ac` ("fix: make dfc CLI usable when the plugin is installed in
-another project") plus the `auto`-mode follow-up. Re-verified end to end against career-ops after
-both fixes: `pnpm dfc:grok-build --mode review --repo-root /opt/career-ops --task "..."` from the
-plugin's cache directory now returns `stopReason: "EndTurn"` with a real, accurate answer about
-career-ops, and the run summary lands under `/opt/career-ops/.agent-runs/grok/runs/` as expected.
+another project") plus the `auto`-mode follow-up (`9c730fd`). The `auto`-mode fix turned out to
+be necessary but not sufficient — see the next finding.
+
+### The real root cause: spawnSync leaves grok's stdin as an open, unfed pipe
+
+After the `auto`-mode fix, re-testing through the actual wrapper against career-ops still
+cancelled — 2/2 — while the identical prompt/flags via a bare `grok` CLI invocation in a shell
+succeeded. That ruled out permission mode as the (sole) cause and pointed at something specific
+to invoking grok via Node's `child_process.spawnSync` rather than a shell. Isolated with a
+minimal standalone script: a `spawnSync` call with no `stdio` option reproduced the cancellation
+every time; adding `stdio: ["ignore", "pipe", "pipe"]` (closing stdin instead of leaving
+`spawnSync`'s default open, unfed pipe) made the identical call succeed every time. Grok
+apparently checks or waits on stdin in some internal code path that only triggers once it
+decides to use a tool (matches every observed cancellation: the `thought` trace always showed
+Grok deciding to read a file right before the cancel) — with stdin never receiving EOF under
+Node's default `spawnSync` pipe behavior, that wait evidently times out into a silent
+`stopReason: "Cancelled"` rather than an explicit error.
+
+Fixed in `dfc-grok-build.ts`: all three `spawnSync("grok", ...)` calls (`checkGrokAvailable`,
+`checkGrokAuthenticated`, `runGrok`) now explicitly pass `stdio: ["ignore", "pipe", "pipe"]`.
+
+Re-verified end to end against career-ops after all three fixes (portability + `loadConfig`
+project-dir precedence + `auto` mode + stdin closure): `pnpm dfc:grok-build --mode review
+--repo-root /opt/career-ops --task "..."` from the plugin's cache directory now returns
+`stopReason: "EndTurn"` with a real, accurate answer about career-ops, and the run summary lands
+under `/opt/career-ops/.agent-runs/grok/runs/` as expected.

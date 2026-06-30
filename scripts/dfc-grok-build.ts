@@ -138,8 +138,17 @@ function buildPrompt(mode: Mode, task: string): string {
   return `${header}\n\nTask: ${task}`;
 }
 
+// spawnSync defaults stdin to an open, unfed pipe — grok appears to block/wait on it in some
+// code paths (confirmed live: a review-mode task that wants to read a file reliably cancels
+// with stdio left at its spawnSync default, and reliably completes with stdin closed). Every
+// grok invocation below closes stdin explicitly rather than leaving that pipe dangling.
+// spawnSync defaults stdin to an open, unfed pipe; every call below closes it explicitly.
+function grokStdio(): ["ignore", "pipe", "pipe"] {
+  return ["ignore", "pipe", "pipe"];
+}
+
 function checkGrokAvailable(): { ok: true } | { ok: false; message: string } {
-  const probe = spawnSync("grok", ["--version"], { encoding: "utf8", timeout: 15_000 });
+  const probe = spawnSync("grok", ["--version"], { encoding: "utf8", timeout: 15_000, stdio: grokStdio() });
   if (probe.error || probe.status !== 0) {
     return {
       ok: false,
@@ -156,6 +165,7 @@ function checkGrokAuthenticated(): { ok: true } | { ok: false; message: string }
     encoding: "utf8",
     timeout: 15_000,
     env: withoutApiKey(process.env),
+    stdio: grokStdio(),
   });
   if (probe.error || probe.status !== 0) {
     return {
@@ -190,7 +200,7 @@ function runGrok(opts: {
       "--permission-mode", opts.permissionMode,
       "-p", opts.prompt,
     ],
-    { encoding: "utf8", env: withoutApiKey(process.env), maxBuffer: 16 * 1024 * 1024 },
+    { encoding: "utf8", env: withoutApiKey(process.env), maxBuffer: 16 * 1024 * 1024, stdio: grokStdio() },
   );
   const stdout = result.stdout || "";
   const stderr = result.stderr || "";
