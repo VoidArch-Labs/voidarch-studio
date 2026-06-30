@@ -8,6 +8,8 @@ not run a local database.
 
 - `surreal.example.env` - committed template with placeholder values.
 - `surreal.env` - your real values (create this; it is **gitignored**).
+- `embed.env` - optional embedding provider values, if live vector search is enabled
+  (create this only when needed; it is **gitignored**).
 
 ## Setup (hosted SurrealDB Cloud)
 
@@ -34,6 +36,14 @@ Environment variables **override** `.dfc/surreal.env`, which **overrides**
 process.env  >  .dfc/surreal.env  >  .dfc/surreal.example.env
 ```
 
+When the CLI is run from an installed plugin against another repository, pass
+`--repo-root /path/to/repo` or set `DFC_TARGET_REPO_ROOT`. Target repo `.dfc`
+files override plugin repo `.dfc` files, while `process.env` still wins:
+
+```
+process.env  >  target .dfc/*.env  >  plugin .dfc/*.env/templates
+```
+
 | Variable           | Meaning                                  | Default                  |
 | ------------------ | ---------------------------------------- | ------------------------ |
 | `DFC_SURREAL_URL`  | Hosted endpoint (`wss://...`)            | required                 |
@@ -56,3 +66,18 @@ DFC_REPO_ID=<repo_slug>
 
 See `docs/dev-memory-surreal-first-round.md` for the full design, schema, and
 context-pack shape.
+
+## Large repo / Free-tier notes
+
+Hosted Free-tier SurrealDB instances are suitable for validation and incremental
+memory refreshes, but not for blasting tens of thousands of rows in one run. Use
+bounded, resumable writes:
+
+```bash
+pnpm dfc:ingest --repo-root /path/to/repo --limit 50
+pnpm dfc:docs:ingest --repo-root /path/to/repo --limit 10
+```
+
+`dfc:ingest` skips unchanged file hashes and reports how many changed files were
+left limited. Discovery excludes generated agent worktrees (`.claude/worktrees/`,
+`.codex/worktrees/`, `.agent-worktrees/`) so context packs rank main-repo files.

@@ -67,6 +67,67 @@ pnpm dfc:context --task "Inspect the plugin architecture" --agent claude
 `DFC_SURREAL_PASS`. Canonical defaults: `DFC_SURREAL_NS=dev_flow_control`,
 `DFC_SURREAL_DB=repo_dev_flow_control`, `DFC_REPO_ID=dev-flow-control`.
 
+### Target repo mode
+
+The `dfc` CLI can run from the plugin package while targeting another repository:
+
+```bash
+pnpm --dir /path/to/dev-flow-control dfc:context \
+  --task "Inspect this app" \
+  --agent claude \
+  --repo-root /path/to/target-repo
+```
+
+Resolution order for the target root is:
+
+1. `--repo-root <path>`
+2. `DFC_TARGET_REPO_ROOT`
+3. `CLAUDE_PROJECT_DIR`
+4. current shell working directory
+5. the plugin repo itself
+
+Config file precedence is:
+
+```text
+process.env > target .dfc/*.env > plugin .dfc/*.env/templates
+```
+
+This lets one installed plugin serve many repos while each repo keeps its own
+database identity:
+
+| Repo | `DFC_REPO_ID` | `DFC_SURREAL_DB` |
+| --- | --- | --- |
+| `dev-flow-control` | `dev-flow-control` | `repo_dev_flow_control` |
+| `career-ops` | `career-ops` | `repo_career_ops` |
+| `my-app` | `my-app` | `repo_my_app` |
+
+Target repos should ignore local memory config and generated state:
+
+```gitignore
+.dfc/*.env
+!.dfc/*.example.env
+graphify-out/
+.agent-runs/
+```
+
+The bundled Claude memory skills already run from `CLAUDE_PLUGIN_ROOT` and pass
+`--repo-root "${CLAUDE_PROJECT_DIR:-$PWD}"`, so `/dfc-context`, `/dfc-ingest`,
+`/dfc-status`, `/dfc-search`, `/dfc-graph`, `/dfc-remember`, and
+`/dfc-session-recap` target the active Claude project.
+
+New repo setup checklist: [`docs/adding-to-new-repo.md`](docs/adding-to-new-repo.md).
+
+For large repos or small hosted SurrealDB instances, use bounded resumable writes:
+
+```bash
+pnpm dfc:ingest --repo-root /path/to/target-repo --limit 50
+pnpm dfc:docs:ingest --repo-root /path/to/target-repo --limit 10
+```
+
+`dfc:ingest` skips unchanged file hashes and reports how many changed files remain
+limited. Both file and docs discovery skip generated agent worktrees such as
+`.claude/worktrees/`, `.codex/worktrees/`, and `.agent-worktrees/`.
+
 ### Memory channels
 
 SurrealDB is the **single** shared backend. Each channel is a *retrieval* lane folded
@@ -110,9 +171,14 @@ chunks), `graph:import` (663 nodes / 1122 edges), `context` (hybrid pack: files 
 graph + doc chunks), `status`, `memory:doctor`, `memory:gc`. See
 [`docs/postmerge-validation-and-roadmap.md`](docs/postmerge-validation-and-roadmap.md) §3b.
 
+**External target validation (2026-06-30):** installed plugin cache validated against
+`/opt/career-ops` with target `.dfc/*.env`, isolated database `repo_career_ops`,
+bounded file/doc writes, docs query, local graph dry-run, context pack, status,
+doctor, and GC dry-run. Full graph/doc/vector imports should be chunked or run on a
+larger SurrealDB instance; Free-tier instances can time out on full-repo loads.
+
 **Still pending:** interactive plugin-session test (`claude --plugin-dir .`, blocked here by
-the nested-session guard); live embedding (needs an explicit, approved provider); efficiency
-benchmark before any token-savings claim.
+the nested-session guard); efficiency benchmark before any token-savings claim.
 
 ## Architecture
 
@@ -290,6 +356,8 @@ All spec components are built. Remaining work is validation-in-the-wild, not aut
 
 - **Live session test.** Install with `--plugin-dir`, restart, and confirm skills auto-trigger,
   hooks fire (`claude --debug`), agents dispatch, and the GitHub MCP server connects with a PAT.
+- **Cross-repo validation.** Exercise `--repo-root` against multiple real repos and keep each
+  repo on its own `DFC_SURREAL_DB`.
 - **Run the efficiency benchmark.** Execute `templates/docs/efficiency-benchmark.md` Tasks A/B/C
   (baseline vs plugin) and record real token/accuracy deltas before claiming improvement.
 - **Close the research gaps.** Work through `templates/docs/research-gaps.md` (GitKraken/Kepler
