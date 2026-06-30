@@ -25,9 +25,11 @@ Use the returned JSON to inspect the listed files and memories first. Do not tre
 
 ## Commands
 
+Core memory:
+
 ```bash
 pnpm dfc:db:check
-pnpm dfc:db:migrate
+pnpm dfc:db:migrate            # applies schema 0001 + 0002 + 0003
 pnpm dfc:ingest --agent codex
 pnpm dfc:remember --kind decision --text "..." --agent codex
 pnpm dfc:remember --kind evidence --text "..." --agent codex
@@ -35,7 +37,24 @@ pnpm dfc:context --task "..." --agent codex
 pnpm dfc:status
 ```
 
+Document / graph / vector channels (each supports `--dry-run` with no credentials):
+
+```bash
+pnpm dfc:docs:ingest --agent codex        # heading-chunk markdown into doc_chunk
+pnpm dfc:docs:query --q "..."             # BM25 over document chunks
+pnpm dfc:graph:import --agent codex        # load graphify-out/graph.json (run /graphify first)
+pnpm dfc:graph:query --q "..."            # rank graph nodes + neighborhood
+pnpm dfc:graph:status                      # graph freshness vs current HEAD
+pnpm dfc:embed --dry-run                   # vector scaffolding (approval-gated; see below)
+pnpm dfc:memory:doctor                     # cross-channel health (resilient w/o DB)
+pnpm dfc:memory:gc --dry-run               # prune orphan/mismatched embeddings
+```
+
 If `--agent` is omitted, commands default to `manual`. Supported values are `manual`, `codex`, and `claude`.
+
+**Vectors are approval-gated.** `dfc:embed` requires an explicit `DFC_EMBED_PROVIDER`
+(`ollama` local/free, or `openai`). The `openai` path additionally requires `OPENAI_API_KEY`
+**and** approval (`DFC_EMBED_APPROVED=1` or `--approve`). Never call a paid embedding API silently.
 
 ## Codex
 
@@ -43,7 +62,10 @@ Codex compatibility lives here and in `package.json` scripts. Codex should call 
 
 ## Claude Code
 
-Claude compatibility lives in `.claude/skills/dfc-context/SKILL.md`. The `/dfc-context` skill calls the same `pnpm dfc:context` command and reads the same SurrealDB database as Codex.
+Claude compatibility lives under `.claude/skills/`. Seven manual-invoke skills wrap the
+same `pnpm dfc:*` commands and read/write the same SurrealDB database as Codex:
+`/dfc-context`, `/dfc-remember`, `/dfc-search`, `/dfc-status`, `/dfc-ingest`,
+`/dfc-session-recap`, and `/dfc-graph`. They are thin wrappers — the CLI is the contract.
 
 ## External agent rules
 

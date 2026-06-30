@@ -67,19 +67,47 @@ pnpm dfc:context --task "Inspect the plugin architecture" --agent claude
 `DFC_SURREAL_PASS`. Canonical defaults: `DFC_SURREAL_NS=dev_flow_control`,
 `DFC_SURREAL_DB=repo_dev_flow_control`, `DFC_REPO_ID=dev-flow-control`.
 
+### Memory channels
+
+SurrealDB is the **single** shared backend. Each channel is a *retrieval* lane folded
+into one token-budgeted context pack — none replaces BM25 or the graph:
+
+| Channel | Tables | Ingest | Query | State |
+| --- | --- | --- | --- | --- |
+| Repo files (BM25) | `file` | `pnpm dfc:ingest` | via `/dfc-context` | implemented |
+| Document chunks (BM25) | `document`, `doc_chunk` | `pnpm dfc:docs:ingest` | `pnpm dfc:docs:query` | implemented |
+| Graph (graphify facts) | `graph_snapshot/node/edge/hyperedge` | `pnpm dfc:graph:import` | `pnpm dfc:graph:query`, `dfc:graph:status` | implemented |
+| Vectors (embeddings) | `embedding_model`, `embedding_chunk` | `pnpm dfc:embed` | folded into `/dfc-context` | scaffolding — **approval-gated**, off by default |
+| Runs / decisions / evidence | `agent_run`, `tool_event`, `decision`, `evidence_item` | `pnpm dfc:import-runs`, `pnpm dfc:remember` | via `/dfc-context` | implemented |
+
+`pnpm dfc:context` fuses all available channels (files + symbols + graph neighborhood +
+document chunks + vector matches + decisions/evidence + recent runs) with deterministic
+scoring and a token budget; any unavailable channel degrades to an empty array.
+
+**Claude memory skills** (manual-invoke, under `.claude/skills/`): `/dfc-context`,
+`/dfc-remember`, `/dfc-search`, `/dfc-status`, `/dfc-ingest`, `/dfc-session-recap`, `/dfc-graph`.
+
 ### Dev-memory status
 
-**Implemented and validated:**
+**Implemented now (typecheck + dry-run validated):** document, graph, and vector
+**code paths**; hybrid context-pack retrieval; the seven Claude memory skills; migration
+`schema/0003_documents_graph_vectors.surql`.
 
-- The SurrealDB memory slice was built and live-validated in the temporary
-  `dev-flow-control-codex` fork.
-- Imported into this canonical repo by this PR after adapting it to canonical naming.
+**Dry-run only (no credentials needed):** `dfc:docs:ingest --dry-run`,
+`dfc:docs:query --dry-run`, `dfc:graph:status --dry-run`, `dfc:graph:query --dry-run`,
+`dfc:embed --dry-run`, `dfc:memory:doctor`, `dfc:memory:gc --dry-run`.
 
-**Still pending:**
+**Requires SurrealDB credentials** (`.dfc/surreal.env` or `DFC_SURREAL_*`): every live
+`ingest`/`import`/`query`/`status` path and `pnpm dfc:db:migrate`.
 
-- Live Claude Code plugin install test and hook-payload validation.
-- Graph / vector / document memory expansion (planned, not implemented).
-- Full efficiency benchmark before any token-savings claim.
+**Requires an explicit embedding provider** (`DFC_EMBED_PROVIDER=ollama|openai`): `dfc:embed`
+live. The paid path (`openai`) **also** needs `OPENAI_API_KEY` **and** approval
+(`DFC_EMBED_APPROVED=1` or `--approve`) — paid APIs are never called silently.
+
+**Still pending:** live canonical SurrealDB validation (needs credentials); interactive
+plugin-session test (`claude --plugin-dir .`); efficiency benchmark before any token-savings
+claim. To run live validation see
+[`docs/postmerge-validation-and-roadmap.md`](docs/postmerge-validation-and-roadmap.md).
 
 ## Architecture
 
