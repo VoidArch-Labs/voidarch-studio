@@ -8,11 +8,11 @@ Refresh the shared dev memory from the current repo state.
 
 Ingest repo text files (BM25 file memory):
 
-!`pnpm dfc:ingest --agent claude`
+!`cd "${CLAUDE_PLUGIN_ROOT}" && pnpm dfc:ingest --agent claude`
 
 Ingest heading-chunked markdown (document memory):
 
-!`pnpm dfc:docs:ingest --agent claude`
+!`cd "${CLAUDE_PLUGIN_ROOT}" && pnpm dfc:docs:ingest --agent claude`
 
 Notes:
 - Both are idempotent: re-ingestion upserts by content; unchanged documents are skipped.

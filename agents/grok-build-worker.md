@@ -29,9 +29,12 @@ deploy, never touch secrets, never widen scope silently, verify before claiming 
    here — report it).
 
 **Process:**
-1. Run via the Bash tool with an explicit timeout of at least 120000ms — Grok CLI startup plus
-   model response routinely takes 10-60+ seconds:
-   `pnpm dfc:grok-build --mode <mode> --task "<bounded task>" [--repo-root <path>] [--allow-writes] [--verify]`
+1. `pnpm` resolves the `dfc:grok-build` script from this plugin's own directory, not whatever
+   project you're working in — `cd "${CLAUDE_PLUGIN_ROOT}"` first, then pass `--repo-root
+   "${CLAUDE_PROJECT_DIR}"` explicitly so Grok still operates on the actual project. Run via the
+   Bash tool with an explicit timeout of at least 120000ms — Grok CLI startup plus model response
+   routinely takes 10-60+ seconds:
+   `cd "${CLAUDE_PLUGIN_ROOT}" && pnpm dfc:grok-build --mode <mode> --repo-root "${CLAUDE_PROJECT_DIR}" --task "<bounded task>" [--allow-writes] [--verify]`
 2. If it exits non-zero: read the printed guidance (missing/unauthenticated Grok CLI, active
    cooldown, bad arguments) and relay it plainly — do not retry blindly, and never pass `--force`
    without the user asking to bypass the cooldown.

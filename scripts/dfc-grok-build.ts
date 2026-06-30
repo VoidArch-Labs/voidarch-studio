@@ -72,7 +72,16 @@ function loadGrokFileEnv(): Record<string, string> {
 }
 
 function resolveTargetRepoRoot(args: Args, fileEnv: Record<string, string>): string {
-  const raw = args["repo-root"] || process.env.DFC_TARGET_REPO_ROOT || fileEnv.DFC_TARGET_REPO_ROOT || process.cwd();
+  // CLAUDE_PROJECT_DIR ranks above bare cwd: skills/agents cd into this plugin's own
+  // directory so pnpm can find the dfc:grok-build script at all (the consuming project's
+  // package.json doesn't have it), which would otherwise make a bare cwd() default point
+  // at the plugin's own directory instead of the project actually being worked on.
+  const raw =
+    args["repo-root"] ||
+    process.env.DFC_TARGET_REPO_ROOT ||
+    fileEnv.DFC_TARGET_REPO_ROOT ||
+    process.env.CLAUDE_PROJECT_DIR ||
+    process.cwd();
   return resolve(raw);
 }
 

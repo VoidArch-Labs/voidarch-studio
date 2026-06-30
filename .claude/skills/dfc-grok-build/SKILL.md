@@ -16,10 +16,14 @@ timeout this plugin's quick status-check skills (`dfc-status`, `dfc-search`, etc
 their inline `!` commands, which is built for instant local DB/file checks, not an external LLM
 call. Using inline `!` substitution here was the original design and it reliably truncated the
 run with `stopReason: "Cancelled"` and empty output, confirmed live on a real host — hence this
-explicit Bash-tool instruction instead:
+explicit Bash-tool instruction instead.
+
+`pnpm` resolves the `dfc:grok-build` script from this plugin's own directory, not the project
+being worked on — `cd` there first, then pass `--repo-root` explicitly so Grok still operates on
+the actual project (`$CLAUDE_PROJECT_DIR`), not on the plugin's own directory:
 
 ```
-pnpm dfc:grok-build --mode review --task "<task derived from the user's request>"
+cd "${CLAUDE_PLUGIN_ROOT}" && pnpm dfc:grok-build --mode review --repo-root "${CLAUDE_PROJECT_DIR}" --task "<task derived from the user's request>"
 ```
 
 Notes:

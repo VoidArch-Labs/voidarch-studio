@@ -6,7 +6,7 @@ allowed-tools: Bash
 
 Record a decision in the shared, agent-neutral dev memory. Pass the text as arguments, e.g. `/dfc-remember We chose hosted SurrealDB because one backend serves every repo`.
 
-!`pnpm dfc:remember --kind decision --text "$ARGUMENTS" --agent claude`
+!`cd "${CLAUDE_PLUGIN_ROOT}" && pnpm dfc:remember --kind decision --text "$ARGUMENTS" --agent claude`
 
 Notes:
 - The first sentence becomes the summary; keep the text to one or two sentences.
