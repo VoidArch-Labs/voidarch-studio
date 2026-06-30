@@ -6,7 +6,7 @@ allowed-tools: Bash
 
 Persist a compact recap of this session as evidence so the next session inherits it. Pass a one-or-two sentence summary, e.g. `/dfc-session-recap Implemented docs/graph/vector substrate; live DB validation still pending creds`.
 
-!`pnpm dfc:remember --kind evidence --text "Session recap: $ARGUMENTS" --agent claude`
+!`cd "${CLAUDE_PLUGIN_ROOT}" && pnpm dfc:remember --kind evidence --text "Session recap: $ARGUMENTS" --agent claude`
 
 Notes:
 - Keep it short — the first sentence becomes the searchable summary.

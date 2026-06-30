@@ -8,15 +8,15 @@ Report the health of the shared dev memory across all channels.
 
 Cross-channel doctor (resilient — works even with no database configured):
 
-!`pnpm dfc:memory:doctor`
+!`cd "${CLAUDE_PLUGIN_ROOT}" && pnpm dfc:memory:doctor`
 
 Per-table row counts (requires SurrealDB credentials):
 
-!`pnpm dfc:status`
+!`cd "${CLAUDE_PLUGIN_ROOT}" && pnpm dfc:status`
 
 Graph freshness vs current HEAD:
 
-!`pnpm dfc:graph:status`
+!`cd "${CLAUDE_PLUGIN_ROOT}" && pnpm dfc:graph:status`
 
 Notes:
 - `dfc:memory:doctor` always reports local diagnostics (ingestible docs, graph presence, embedding provider) and adds a database section only when credentials are configured.

@@ -21,6 +21,7 @@ dist/
 .dfc/*.env
 !.dfc/surreal.example.env
 !.dfc/embed.example.env
+!.dfc/grok.example.env
 
 # OS / editor cruft
 .DS_Store

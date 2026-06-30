@@ -36,13 +36,28 @@ export function parseEnvFile(path: string): Record<string, string> {
 }
 
 /**
+ * `.dfc/` directory to read config from. When the plugin is installed once and used
+ * across multiple projects (each with its own DFC_REPO_ID/database), the project
+ * actually being worked on must win over this script's own install location —
+ * otherwise every consuming project would silently share the plugin's bundled
+ * credentials/repo_id instead of its own. Prefers CLAUDE_PROJECT_DIR/.dfc/ when that
+ * project has set one up; falls back to this script's own REPO_ROOT/.dfc/ otherwise
+ * (plain CLI usage with no CLAUDE_PROJECT_DIR, or a project with no .dfc/ of its own).
+ */
+export function resolveDfcDir(): string {
+  const projectDir = process.env.CLAUDE_PROJECT_DIR;
+  if (projectDir && existsSync(join(projectDir, ".dfc"))) return join(projectDir, ".dfc");
+  return join(REPO_ROOT, ".dfc");
+}
+
+/**
  * Resolve configuration. Precedence (highest first):
  *   1. process.env
  *   2. .dfc/surreal.env       (real values, gitignored)
  *   3. .dfc/surreal.example.env (committed template / defaults)
  */
 export function loadConfig(): DfcConfig {
-  const dfcDir = join(REPO_ROOT, ".dfc");
+  const dfcDir = resolveDfcDir();
   const fileEnv = {
     ...parseEnvFile(join(dfcDir, "surreal.example.env")),
     ...parseEnvFile(join(dfcDir, "surreal.env")),

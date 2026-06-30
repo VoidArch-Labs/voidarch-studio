@@ -1,6 +1,6 @@
 {
   "name": "dev-flow-control",
-  "version": "0.1.0",
+  "version": "0.2.3",
   "description": "Subscription-first autonomous development control for Claude Code: routes work through GSD phases, Kepler/GitKraken, repo graphs, scoped subagents, Jules, Context7, Firecrawl, hooks, and observability to lower tokens, raise safe autonomy, and improve accuracy.",
   "author": {
     "name": "local",

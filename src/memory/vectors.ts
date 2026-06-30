@@ -15,7 +15,7 @@ import { join } from "node:path";
 import { RecordId, type Surreal } from "surrealdb";
 import { buildDocPlan } from "./docs.js";
 import { cosineSimilarity } from "./scoring.js";
-import { parseEnvFile, queryResult, queryResults, REPO_ROOT } from "./surreal.js";
+import { parseEnvFile, queryResult, queryResults, resolveDfcDir } from "./surreal.js";
 import type {
   ContextVectorChunkEntry,
   EmbeddingChunkRecord,
@@ -49,7 +49,7 @@ function defaultModel(p: EmbedProvider): string {
 }
 
 function embedFileEnv(): Record<string, string> {
-  return parseEnvFile(join(REPO_ROOT, ".dfc", "embed.env"));
+  return parseEnvFile(join(resolveDfcDir(), "embed.env"));
 }
 
 function getEmbedEnv(key: string, fileEnv = embedFileEnv()): string {

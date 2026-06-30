@@ -6,7 +6,7 @@ allowed-tools: Bash
 
 Rank graph nodes (files, modules, symbols, concepts) for the topic and show their import/call/contains neighborhood:
 
-!`pnpm dfc:graph:query --q "$ARGUMENTS"`
+!`cd "${CLAUDE_PLUGIN_ROOT}" && pnpm dfc:graph:query --q "$ARGUMENTS"`
 
 Notes:
 - Add `--dry-run` to query `graphify-out/graph.json` directly with no database.

@@ -117,7 +117,7 @@ User / issue / PR / backlog item
   → GitKraken Kepler        task, worktree, branch/session, diff, stage/commit/PR
   → Claude Code supervisor  GSD routing, intent/architecture/risk, executor choice, approvals
   → Context & planning      graphify repo graph · repo-explorer · Context7 · Firecrawl (gated)
-  → Execution               implementation-worker · test-debugger · Jules (async PR)
+  → Execution               implementation-worker · test-debugger · Jules (async PR) · Grok Build (manual, sync)
   → Verification            tests/lint/typecheck/build/CI · pr-reviewer · security-reviewer
   → Observability+approval  .agent-runs logs · session report · rollback · human approval
 ```
@@ -144,9 +144,12 @@ observability = audit · the user approves irreversible actions.**
 "Auto-invocable" maps to the `disable-model-invocation` frontmatter field (`false` = the model
 may auto-select it; `true` = manual/user-invoked only).
 
+`.claude/skills/dfc-grok-build` follows the same manual pattern as the seven `dfc-*` skills
+documented in [`AGENTS.md`](AGENTS.md#claude-code) — it wraps `pnpm dfc:grok-build`.
+
 ### Agents (`agents/`)
 
-Nine scoped subagents, least-privilege tools (read-only agents have **no** Edit/Write/Bash):
+Ten scoped subagents, least-privilege tools (read-only agents have **no** Edit/Write/Bash):
 
 | Agent | Phase | Writes? | Role |
 |---|---|---|---|
@@ -154,6 +157,7 @@ Nine scoped subagents, least-privilege tools (read-only agents have **no** Edit/
 | `graph-navigator` | Plan | no | Dependencies, call chains, impact radius via the repo graph. |
 | `planner` | Plan | no | Bounded plan + executor route + verification + gates. |
 | `implementation-worker` | Execute | yes | Scoped edits + tests; no broad refactors. |
+| `grok-build-worker` | Execute/Verify | via Grok | Drives the external Grok Build CLI (subscription mode) for review/implement/diff-review tasks. |
 | `test-debugger` | Execute/Verify | yes | Reproduce → root cause → narrow patch. |
 | `pr-reviewer` | Verify | no | Acceptance criteria, coverage, regression risk. |
 | `security-reviewer` | Verify | no | Auth/secrets/permissions/injection; severity-ranked. |

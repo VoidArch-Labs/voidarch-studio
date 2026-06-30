@@ -6,7 +6,7 @@ allowed-tools: Bash
 
 Run this shared CLI command and read the JSON output as planning context for the current task:
 
-!`pnpm dfc:context --task "$ARGUMENTS" --agent claude`
+!`cd "${CLAUDE_PLUGIN_ROOT}" && pnpm dfc:context --task "$ARGUMENTS" --agent claude`
 
 Use the returned JSON to guide planning:
 - prefer listed files before broad repo reads
