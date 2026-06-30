@@ -27,7 +27,9 @@ cd "${CLAUDE_PLUGIN_ROOT}" && pnpm dfc:grok-build --mode review --repo-root "${C
 ```
 
 Notes:
-- Default mode is **review** (read-only, `--permission-mode plan`). For `implement`, pass
+- Default mode is **review** (read-only, `--permission-mode auto` — confirmed live to allow
+  reads while still declining write attempts; `plan` mode was tried first but blocks/cancels
+  read tool calls too in headless operation, not just writes). For `implement`, pass
   `--allow-writes` explicitly — only when the user's request clearly authorized Grok to edit
   files. For `diff-review`, pass `--mode diff-review` instead.
 - Spawns `grok` with `XAI_API_KEY` stripped — always subscription/cached-login mode, never

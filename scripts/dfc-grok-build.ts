@@ -177,7 +177,7 @@ function runGrok(opts: {
   targetRepoRoot: string;
   prompt: string;
   model: string;
-  permissionMode: "plan" | "acceptEdits";
+  permissionMode: "auto" | "acceptEdits";
 }): { exitCode: number; stdout: string; stderr: string; parsed: GrokResult | null; sessionId: string } {
   const sessionId = randomUUID();
   const result = spawnSync(
@@ -274,7 +274,7 @@ function main(): void {
     targetRepoRoot,
     prompt,
     model,
-    permissionMode: allowWrites ? "acceptEdits" : "plan",
+    permissionMode: allowWrites ? "acceptEdits" : "auto",
   });
   const finishedAt = new Date().toISOString();
 

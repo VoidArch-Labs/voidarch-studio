@@ -817,3 +817,49 @@ pnpm dfc:grok-build --mode review --task "Explain this repo in one paragraph" --
 All four must pass/succeed before opening the PR. `claude plugin validate .` runs from the
 worktree root (the plugin manifest lives at `.claude-plugin/plugin.json`, unaffected by this
 change but worth a fresh check since new skill/agent files were added).
+
+---
+
+## Addendum: cross-project install on career-ops (post-merge-prep findings)
+
+Installing this plugin into a second, real project (`/opt/career-ops`, project-scope plugin
+install) and verifying live SurrealDB access surfaced three more issues not caught by testing
+inside dev-flow-control's own repo:
+
+1. **All eight `.claude/skills/dfc-*` skills hardcoded bare `pnpm dfc:*`**, which only resolves
+   when cwd is the dev-flow-control repo itself — confirmed broken (`Command not found`) from
+   `/opt/career-ops`, whose own `package.json` has no `dfc:*` scripts. Fixed by running from
+   `"${CLAUDE_PLUGIN_ROOT}"` instead of bare cwd.
+
+2. **That fix alone would have made every `dfc:*` command always read the plugin's own bundled
+   `.dfc/surreal.env`**, ignoring any project-specific one — defeating the documented "one
+   database per repo" design (career-ops already has its own `.dfc/surreal.env` with
+   `DFC_REPO_ID=career-ops`). `loadConfig()`/`embedFileEnv()` in `src/memory/surreal.ts` now
+   resolve `.dfc/` relative to `CLAUDE_PROJECT_DIR` first (when that project has its own `.dfc/`
+   directory), falling back to the plugin's own install location otherwise. Verified live:
+   `dfc:memory:doctor` invoked from the plugin's cache directory with
+   `CLAUDE_PROJECT_DIR=/opt/career-ops` correctly reported `repo_id: career-ops` and real,
+   connected database row counts (1172 files, etc.) from career-ops's own `repo_career_ops` db.
+
+3. **`--permission-mode plan` (chosen in Task 1 above) does not actually support unattended
+   reads.** It happened to work in the original local/dev-flow-control testing only because Grok
+   could answer from its own pre-loaded `CLAUDE.md`/`AGENTS.md` context without needing a tool
+   call. Against career-ops specifically (whose `CLAUDE.md`+`AGENTS.md` are ~12k tokens combined,
+   and whose `.claude/settings.local.json` has a narrow, project-specific Bash allow-list that
+   Grok also reads per `grok inspect`), the **same review-mode prompt** that worked elsewhere
+   reliably produced `stopReason: "Cancelled"` the moment Grok's own "thought" field showed it
+   deciding to read a file. Reproduced with the wrapper, then isolated to pure `grok` CLI (no
+   wrapper) with the exact prompt text — confirming it's `plan` mode's behavior, not a wrapper
+   bug. Tested `auto` and `dontAsk` as alternatives: `auto` completed with `stopReason: "EndTurn"`
+   and showed Grok actually reading `README.md` in its thought trace; `dontAsk` still cancelled.
+   Safety-verified `auto` separately: given an explicit task to write `proof.txt` under a
+   REVIEW-mode/read-only prompt, Grok declined and the file was never created. Switched
+   `runGrok()`'s non-write permission mode from `plan` to `auto` (`acceptEdits` for
+   `--allow-writes` is unchanged — it was never observed to have this problem, since allowing
+   writes is its whole point).
+
+All three fixed in commit `92a98ac` ("fix: make dfc CLI usable when the plugin is installed in
+another project") plus the `auto`-mode follow-up. Re-verified end to end against career-ops after
+both fixes: `pnpm dfc:grok-build --mode review --repo-root /opt/career-ops --task "..."` from the
+plugin's cache directory now returns `stopReason: "EndTurn"` with a real, accurate answer about
+career-ops, and the run summary lands under `/opt/career-ops/.agent-runs/grok/runs/` as expected.
