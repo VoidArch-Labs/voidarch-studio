@@ -25,6 +25,8 @@
     "dfc:memory:gc": "tsx scripts/dfc-memory-gc.ts",
     "dfc:grok-build": "tsx scripts/dfc-grok-build.ts",
     "dfc:validate-hooks": "bash scripts/dfc-validate-hooks.sh",
+    "dfc:init": "tsx scripts/dfc-init.ts",
+    "dfc:dashboard": "tsx scripts/dfc-dashboard.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

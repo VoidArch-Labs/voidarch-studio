@@ -1,0 +1,144 @@
+// dfc:init - scaffold a target repository so the installed dev-flow-control plugin
+// can serve it: .dfc/ env templates (with per-repo DB identity), .gitignore entries,
+// and optional CLAUDE.md / AGENTS.md from the bundled templates.
+//
+// Never overwrites existing files unless --force. Never copies credentials unless
+// --copy-credentials is passed explicitly.
+
+import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { basename, join } from "node:path";
+import { parseArgs, repoRootFromArgs } from "../src/memory/cli.js";
+import { REPO_ROOT, parseEnvFile } from "../src/memory/surreal.js";
+
+const GITIGNORE_LINES = [
+  ".dfc/*.env",
+  "!.dfc/*.example.env",
+  "graphify-out/",
+  ".agent-runs/",
+];
+
+function slugify(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "repo";
+}
+
+function rewriteRepoIdentity(template: string, repoId: string): string {
+  const dbName = `repo_${repoId.replace(/-/g, "_")}`;
+  return template
+    .replace(/^DFC_REPO_ID=.*$/m, `DFC_REPO_ID=${repoId}`)
+    .replace(/^DFC_SURREAL_DB=.*$/m, `DFC_SURREAL_DB=${dbName}`);
+}
+
+function main(): void {
+  const args = parseArgs(process.argv.slice(2));
+  const targetRoot = repoRootFromArgs(args);
+  const force = args.force === "true";
+
+  if (targetRoot === REPO_ROOT) {
+    console.error(
+      "dfc:init targets another repository. Pass --repo-root /path/to/repo " +
+        "(or set DFC_TARGET_REPO_ROOT / run from inside the target repo).",
+    );
+    process.exit(2);
+  }
+  if (!existsSync(targetRoot)) {
+    console.error(`Target repo root does not exist: ${targetRoot}`);
+    process.exit(2);
+  }
+
+  const repoId = args["repo-id"] || slugify(basename(targetRoot));
+  const done: string[] = [];
+  const skipped: string[] = [];
+
+  // 1. .dfc/ with per-repo identity baked into the committed template.
+  const targetDfc = join(targetRoot, ".dfc");
+  mkdirSync(targetDfc, { recursive: true });
+  const surrealTemplate = join(REPO_ROOT, ".dfc", "surreal.example.env");
+  const surrealOut = join(targetDfc, "surreal.example.env");
+  if (existsSync(surrealOut) && !force) {
+    skipped.push(".dfc/surreal.example.env (exists; --force to overwrite)");
+  } else {
+    writeFileSync(surrealOut, rewriteRepoIdentity(readFileSync(surrealTemplate, "utf8"), repoId));
+    done.push(`.dfc/surreal.example.env (DFC_REPO_ID=${repoId}, DFC_SURREAL_DB=repo_${repoId.replace(/-/g, "_")})`);
+  }
+  const embedTemplate = join(REPO_ROOT, ".dfc", "embed.example.env");
+  const embedOut = join(targetDfc, "embed.example.env");
+  if (existsSync(embedOut) && !force) {
+    skipped.push(".dfc/embed.example.env (exists)");
+  } else {
+    copyFileSync(embedTemplate, embedOut);
+    done.push(".dfc/embed.example.env");
+  }
+
+  // 2. Optionally seed real connection values from the plugin's own surreal.env
+  //    (same instance, per-repo database). Explicit opt-in only.
+  if (args["copy-credentials"] === "true") {
+    const pluginEnv = parseEnvFile(join(REPO_ROOT, ".dfc", "surreal.env"));
+    const surrealEnvOut = join(targetDfc, "surreal.env");
+    if (!pluginEnv.DFC_SURREAL_URL) {
+      skipped.push(".dfc/surreal.env (plugin has no credentials to copy)");
+    } else if (existsSync(surrealEnvOut) && !force) {
+      skipped.push(".dfc/surreal.env (exists)");
+    } else {
+      const lines = [
+        `DFC_SURREAL_URL=${pluginEnv.DFC_SURREAL_URL}`,
+        `DFC_SURREAL_NS=${pluginEnv.DFC_SURREAL_NS || "dev_flow_control"}`,
+        `DFC_SURREAL_DB=repo_${repoId.replace(/-/g, "_")}`,
+        `DFC_REPO_ID=${repoId}`,
+        `DFC_SURREAL_USER=${pluginEnv.DFC_SURREAL_USER || ""}`,
+        `DFC_SURREAL_PASS=${pluginEnv.DFC_SURREAL_PASS || ""}`,
+        `DFC_SURREAL_AUTH_SCOPE=${pluginEnv.DFC_SURREAL_AUTH_SCOPE || "root"}`,
+      ];
+      writeFileSync(surrealEnvOut, lines.join("\n") + "\n", { mode: 0o600 });
+      done.push(".dfc/surreal.env (credentials copied from plugin, per-repo database)");
+    }
+  }
+
+  // 3. .gitignore entries.
+  const gitignorePath = join(targetRoot, ".gitignore");
+  const existing = existsSync(gitignorePath) ? readFileSync(gitignorePath, "utf8") : "";
+  const existingLines = new Set(existing.split(/\r?\n/).map((l) => l.trim()));
+  const missing = GITIGNORE_LINES.filter((l) => !existingLines.has(l));
+  if (missing.length) {
+    const block = (existing && !existing.endsWith("\n") ? "\n" : "") +
+      "\n# dev-flow-control\n" + missing.join("\n") + "\n";
+    appendFileSync(gitignorePath, block);
+    done.push(`.gitignore (+${missing.length} entries)`);
+  } else {
+    skipped.push(".gitignore (already covered)");
+  }
+
+  // 4. Optional workflow templates.
+  for (const [flag, template, outName] of [
+    ["claude-md", "CLAUDE.md.template", "CLAUDE.md"],
+    ["agents-md", "AGENTS.md.template", "AGENTS.md"],
+  ] as const) {
+    if (args[flag] !== "true") continue;
+    const out = join(targetRoot, outName);
+    if (existsSync(out) && !force) {
+      skipped.push(`${outName} (exists; merge manually from templates/${template})`);
+    } else {
+      copyFileSync(join(REPO_ROOT, "templates", template), out);
+      done.push(outName);
+    }
+  }
+
+  console.log(`dfc:init — ${targetRoot} (repo id: ${repoId})`);
+  for (const d of done) console.log(`  + ${d}`);
+  for (const s of skipped) console.log(`  = ${s}`);
+  console.log(`
+Next steps:
+  1. Credentials: create ${join(targetRoot, ".dfc/surreal.env")} from the example
+     (or rerun with --copy-credentials to reuse the plugin's instance with a per-repo DB).
+  2. Verify:   pnpm --dir ${REPO_ROOT} dfc:db:check   --repo-root ${targetRoot}
+  3. Migrate:  pnpm --dir ${REPO_ROOT} dfc:db:migrate --repo-root ${targetRoot}
+  4. Ingest:   pnpm --dir ${REPO_ROOT} dfc:ingest     --repo-root ${targetRoot} --limit 50
+  5. Load the plugin in the target repo:  claude --plugin-dir ${REPO_ROOT}
+  6. Dashboard: pnpm --dir ${REPO_ROOT} dfc:dashboard --repo-root ${targetRoot}`);
+}
+
+try {
+  main();
+} catch (err) {
+  console.error(err);
+  process.exit(1);
+}

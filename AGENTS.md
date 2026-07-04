@@ -69,14 +69,16 @@ environment by the wrapper, so it never bills pay-per-token). A 24h local cooldo
 (`.agent-runs/grok/cooldown.json`) kicks in automatically when Grok reports a
 quota/rate-limit/usage-limit error; clear it with `--clear-cooldown` or bypass once with
 `--force`. `implement` mode requires explicit `--allow-writes`. See
-`.claude/skills/dfc-grok-build/SKILL.md` and `agents/grok-build-worker.md`.
+`skills/dfc-grok-build/SKILL.md` and `agents/grok-build-worker.md`.
 
 ## Claude Code
 
-Claude compatibility lives under `.claude/skills/`. Seven manual-invoke skills wrap the
-same `pnpm dfc:*` commands and read/write the same SurrealDB database as Codex:
-`/dfc-context`, `/dfc-remember`, `/dfc-search`, `/dfc-status`, `/dfc-ingest`,
-`/dfc-session-recap`, and `/dfc-graph`. They are thin wrappers — the CLI is the contract.
+Claude compatibility lives in the plugin's `skills/` directory (bundled, so any repo that
+loads the plugin gets them). Manual-invoke skills wrap the same `pnpm dfc:*` commands and
+read/write the same SurrealDB database as Codex: `/dfc-context`, `/dfc-remember`,
+`/dfc-search`, `/dfc-status`, `/dfc-ingest`, `/dfc-session-recap`, `/dfc-graph`,
+`/dfc-grok-build`, `/dfc-init`, and `/dfc-dashboard`. They are thin wrappers — the CLI is
+the contract.
 
 ## External agent rules
 

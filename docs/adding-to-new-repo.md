@@ -3,6 +3,21 @@
 Use this checklist when installing or validating `dev-flow-control` against a
 repository that is not the plugin repo itself.
 
+## Fast path (recommended)
+
+```bash
+pnpm --dir /path/to/dev-flow-control dfc:init --repo-root /path/to/your-repo
+# optional flags: --repo-id <slug> --copy-credentials --claude-md --agents-md --force
+cd /path/to/your-repo && claude --plugin-dir /path/to/dev-flow-control
+```
+
+`dfc:init` performs the "Target Repo Files" and `.gitignore` steps below automatically
+(idempotent; never overwrites without `--force`; `--copy-credentials` reuses the plugin's
+SurrealDB instance with an isolated per-repo database). Then verify with
+`pnpm dfc:db:check --repo-root …` and open the dashboard with
+`pnpm dfc:dashboard --repo-root …`. The rest of this document is the manual equivalent
+and the validation detail.
+
 ## Core Rules
 
 - Keep one SurrealDB namespace, but use one database per repo.

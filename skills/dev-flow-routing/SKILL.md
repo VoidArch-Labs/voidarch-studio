@@ -29,7 +29,9 @@ Do not load every tool into every session. Expose only the current phase's tools
 - Output: a bounded problem statement and success criteria.
 
 ### Plan — locate, design, gather current facts
-- Repo discovery FIRST: invoke `graph-context-scan` (wraps the graphify skill) before raw reads.
+- Dev-memory FIRST (if configured): `/dfc-context` builds a token-budgeted context pack
+  (files + symbols + graph + doc chunks + decisions + recent agent runs) for the task.
+- Repo discovery: invoke `graph-context-scan` (wraps the graphify skill) before raw reads.
 - Subagents: `repo-explorer` (read-only locate), `graph-navigator` (dependencies / impact radius).
 - Planning: the `planner` agent converts Discuss output into a bounded plan with verification + gates.
 - Docs: the `docs-researcher` agent + Context7 for version-sensitive library/API facts only.
@@ -37,6 +39,7 @@ Do not load every tool into every session. Expose only the current phase's tools
 
 ### Execute — make the smallest working change
 - Local: `implementation-worker` (scoped edits, tests), `test-debugger` (narrow fixes).
+- External local worker: `/dfc-grok-build` (manual) for bounded Grok Build tasks.
 - Async branchable GitHub tasks: `jules-handoff` (manual, approval-gated) → Jules opens a PR.
 - Surface-specific: `frontend-design`, `data`, `mcp-server-dev` only when the task is that surface.
 - Git state: hand task/worktree/branch/diff/commit/PR to Kepler/GitKraken — see `kepler-task-brief`.
@@ -49,9 +52,19 @@ Do not load every tool into every session. Expose only the current phase's tools
 
 ### Ship — summarize, gate, integrate
 - Skills: `session-report` / `observability-report` for the run summary.
+- Persist outcomes: `/dfc-remember` records key decisions/evidence into dev-memory;
+  `/dfc-session-recap` writes the session recap.
 - `approval-request` before any irreversible or external action.
 - Kepler/GitKraken handles stage/commit/PR flow. The `release-checker` agent confirms Ship readiness.
 - `project-artifact` only for milestones.
+
+## Per-repo visibility & setup
+
+- `/dfc-dashboard` — local web dashboard for the active repo: plugin health checks,
+  `.agent-runs/` session observability, dev-memory state, repo graph.
+- `/dfc-status` — terminal dev-memory table counts; `/dfc-search`, `/dfc-graph` for lookups.
+- `/dfc-init` — scaffold a new repo (.dfc env templates, .gitignore, optional CLAUDE/AGENTS.md).
+- `/dfc-ingest` — refresh the repo's file memory after significant changes.
 
 ## Real tool wiring (this environment)
 
@@ -66,7 +79,10 @@ On another machine these may be absent — keep references generic and degrade g
 
 ## Skill visibility
 
-- Manual-only (`disable-model-invocation: true`): `kepler-task-brief`, `jules-handoff`, `firecrawl-research`.
+- Manual-only (`disable-model-invocation: true`): `kepler-task-brief`, `jules-handoff`,
+  `firecrawl-research`, and all `/dfc-*` skills (`dfc-context`, `dfc-remember`, `dfc-search`,
+  `dfc-status`, `dfc-ingest`, `dfc-graph`, `dfc-session-recap`, `dfc-grok-build`, `dfc-init`,
+  `dfc-dashboard`).
 - Auto-invocable (`false`): `dev-flow-routing`, `graph-context-scan`, `observability-report`, `approval-request`.
 
 See `templates/docs/gsd-skill-routing.md` for the full routing matrix and Anthropic-skill overrides.

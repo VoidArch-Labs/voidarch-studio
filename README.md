@@ -24,15 +24,13 @@ checks, async branch work, and workflow visibility.
 
 ## Status
 
-**v0.1.0 — feature-complete build.** Ships the manifest, 7 skills, 9 agents, 7 hooks, the
-read-only GitHub MCP config, the `CLAUDE.md`/`AGENTS.md` templates, 9 flow docs, optional MCP
-examples, and this README.
-
-> **Implementation-hardening pass (current):** GitKraken MCP/CLI write gating, scoped approval
-> records (replacing broad flags), fail-closed security hooks, `--force-with-lease` gating, explicit
-> graph integration, session-scoped markers, richer observability fields, optional MCP examples, and
-> tightened read-only agent Bash wording. **These changes were NOT tested, validated, or run in any
-> live session — by instruction.** Verify before relying on them; the plugin is not validated.
+**v0.3.0 — drop-in development-control plugin.** Ships the manifest, 17 skills (7 workflow +
+10 `/dfc-*` dev-memory/dashboard/setup), 10 agents, 7 fail-closed hooks, a **per-repo web
+dashboard** (`pnpm dfc:dashboard`), a one-shot target-repo scaffold (`pnpm dfc:init`), the
+read-only GitHub MCP config, `CLAUDE.md`/`AGENTS.md` templates, 9 flow docs, and optional MCP
+examples. Manifest validation (`claude plugin validate`), typecheck, hook harness, and
+dashboard/init smoke tests pass; see the roadmap for what is still only partially
+live-validated.
 
 ## Shared dev-memory (agent-neutral SurrealDB `dfc` CLI)
 
@@ -41,7 +39,7 @@ ships a shared, **agent-neutral** dev-memory CLI (`pnpm dfc:*`) backed by **host
 one per-repo dev-memory database that every agent reads and writes:
 
 - **Claude Code** compatibility is supported through
-  [`.claude/skills/dfc-context/SKILL.md`](.claude/skills/dfc-context/SKILL.md) (the `/dfc-context`
+  [`skills/dfc-context/SKILL.md`](skills/dfc-context/SKILL.md) (the `/dfc-context`
   skill) and the plugin docs.
 - **Codex and future agents** use the same CLI, wired through [`AGENTS.md`](AGENTS.md) and the
   `pnpm dfc:*` scripts.
@@ -145,7 +143,7 @@ into one token-budgeted context pack — none replaces BM25 or the graph:
 document chunks + vector matches + decisions/evidence + recent runs) with deterministic
 scoring and a token budget; any unavailable channel degrades to an empty array.
 
-**Claude memory skills** (manual-invoke, under `.claude/skills/`): `/dfc-context`,
+**Claude memory skills** (manual-invoke, bundled in the plugin under `skills/`): `/dfc-context`,
 `/dfc-remember`, `/dfc-search`, `/dfc-status`, `/dfc-ingest`, `/dfc-session-recap`, `/dfc-graph`.
 
 ### Dev-memory status
@@ -210,6 +208,9 @@ observability = audit · the user approves irreversible actions.**
 | `kepler-task-brief` | **manual** | Convert a request/issue/Plan into a Kepler-ready task brief. |
 | `jules-handoff` | **manual** | Convert a Plan into a bounded, approval-gated Jules task packet. |
 | `firecrawl-research` | **manual** | Bounded external web extraction; crawl/extract gated. |
+| `dfc-dashboard` | **manual** | Start the per-repo web dashboard (health, sessions, memory, graph). |
+| `dfc-init` | **manual** | Scaffold the current repo (.dfc templates, .gitignore, CLAUDE/AGENTS.md). |
+| `dfc-context` / `dfc-remember` / `dfc-search` / `dfc-status` / `dfc-ingest` / `dfc-graph` / `dfc-session-recap` / `dfc-grok-build` | **manual** | SurrealDB dev-memory + external-worker skills (see below). |
 
 "Auto-invocable" maps to the `disable-model-invocation` frontmatter field (`false` = the model
 may auto-select it; `true` = manual/user-invoked only).
@@ -297,17 +298,45 @@ Each documents its approval requirements; enabling any of them is opt-in.
 - `templates/approval.example.json` — the scoped approval-record shape (copy into `.agent-runs/approvals/`).
 - `templates/mcp.examples/` — copyable, opt-in MCP server snippets (see [MCP](#mcp-mcpjson)).
 
-## Installation
+## Per-repo dashboard
 
 ```bash
-# Local test
-claude --plugin-dir /path/to/dev-flow-control
+pnpm dfc:dashboard --repo-root /path/to/repo     # http://127.0.0.1:4949 (or /dfc-dashboard in-session)
+```
 
-# Or install from a marketplace once published
+Local-only (binds 127.0.0.1), read-only, no extra dependencies. Four tabs:
+
+- **Overview** — live health checks: plugin manifest, hook scripts present, `jq`, bundled
+  skills/agents counts, repo-graph freshness, `.agent-runs/` observability, dev-memory config.
+- **Development** — SurrealDB dev-memory (table counts, recent decisions/evidence/agent runs,
+  60s cache + manual refresh) and scoped approval records.
+- **Sessions** — `.agent-runs/sessions/` per-session tool activity, verification and
+  graph-scan markers, recent tool events.
+- **Graph** — graphify node/edge counts and the interactive `graph.html`.
+
+Everything degrades gracefully: no SurrealDB creds → memory panel reads "off"; no graph →
+prompt to run `/graphify`; no `.agent-runs/` → appears after the first hooked session.
+
+## Installation — drop into any repo
+
+```bash
+# 1. One-time: install plugin deps
+cd /path/to/dev-flow-control && pnpm install
+
+# 2. Scaffold the target repo (.dfc templates with per-repo DB identity, .gitignore)
+pnpm dfc:init --repo-root /path/to/your-repo            # add --copy-credentials to reuse
+                                                        # the plugin's SurrealDB instance
+                                                        # with an isolated per-repo database
+
+# 3. Load the plugin when working in that repo
+cd /path/to/your-repo && claude --plugin-dir /path/to/dev-flow-control
+
+# 4. Inside the session: /dfc-init (if you skipped step 2), /dfc-context, /dfc-dashboard …
 ```
 
 Hooks load at session start — restart Claude Code after enabling. Use `claude --debug` to see
-hook execution and `/hooks` to review loaded hooks.
+hook execution and `/hooks` to review loaded hooks. Full checklist:
+[`docs/adding-to-new-repo.md`](docs/adding-to-new-repo.md).
 
 ## Skill visibility strategy
 
