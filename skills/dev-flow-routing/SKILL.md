@@ -63,8 +63,18 @@ Do not load every tool into every session. Expose only the current phase's tools
 - `/dfc-dashboard` — local web dashboard for the active repo: plugin health checks,
   `.agent-runs/` session observability, dev-memory state, repo graph.
 - `/dfc-status` — terminal dev-memory table counts; `/dfc-search`, `/dfc-graph` for lookups.
-- `/dfc-init` — scaffold a new repo (.dfc env templates, .gitignore, optional CLAUDE/AGENTS.md).
+- `/dfc-init` — scaffold a new repo (.dfc env templates, .gitignore, workflow scripts,
+  optional CLAUDE/AGENTS.md).
 - `/dfc-ingest` — refresh the repo's file memory after significant changes.
+- `/dfc-graph-build` — build the repo graph directly into SurrealDB (Rust
+  graphify-surreal binary; fallback: graphify JSON + `/dfc-graph`).
+
+## Bundled workflows (installed to .claude/workflows/ by dfc:init)
+
+Multi-agent orchestrations for the Workflow tool — invoke by name when the user opts in:
+- `dfc-review` — diff review across bugs/security/silent-failures with adversarial verify.
+- `dfc-understand` — parallel subsystem readers → architecture map + memory-worthy facts.
+- `dfc-preship` — deterministic checks + independent release/security verdicts.
 
 ## Real tool wiring (this environment)
 

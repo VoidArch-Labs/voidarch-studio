@@ -98,12 +98,30 @@ export function dfcFileEnv(repoRoot?: string): Record<string, string> {
   };
 }
 
+/** Embedded engine URL (SurrealKV/RocksDB/in-memory) — no server, no credentials. */
+export function isEmbeddedUrl(url: string): boolean {
+  return /^(mem|surrealkv(\+versioned)?|rocksdb):\/\//.test(url.trim());
+}
+
+/** Make a relative embedded path absolute against the target repo root, so
+ *  `surrealkv://.dfc/dev-memory` in a committed env template works from any cwd. */
+function absolutizeEmbeddedUrl(url: string, repoRoot: string): string {
+  const m = /^((?:mem|surrealkv(?:\+versioned)?|rocksdb):\/\/)(.+)$/.exec(url.trim());
+  if (!m) return url.trim();
+  const [, scheme, path] = m;
+  if (!path || path.startsWith("/") || scheme === "mem://") return url.trim();
+  return `${scheme}${resolve(repoRoot, path)}`;
+}
+
 export function loadConfig(options: ConfigOptions = {}): DfcConfig {
   const fileEnv = dfcFileEnv(options.repoRoot);
   const get = (k: string): string => (process.env[k] ?? fileEnv[k] ?? "").trim();
 
+  const rawUrl = get("DFC_SURREAL_URL");
   return {
-    url: get("DFC_SURREAL_URL"),
+    url: isEmbeddedUrl(rawUrl)
+      ? absolutizeEmbeddedUrl(rawUrl, resolveRepoRoot(options.repoRoot))
+      : rawUrl,
     namespace: get("DFC_SURREAL_NS") || "dev_flow_control",
     database: get("DFC_SURREAL_DB") || "repo_dev_flow_control",
     repoId: get("DFC_REPO_ID") || "dev-flow-control",
@@ -150,11 +168,13 @@ async function withTimeout<T>(label: string, promise: Promise<T>, timeoutMs: num
 /** Throw a clear error if required fields are missing or still placeholders. */
 export function assertUsableConfig(cfg: DfcConfig): void {
   const missing: string[] = [];
-  const required: Array<[string, string]> = [
-    ["DFC_SURREAL_URL", cfg.url],
-    ["DFC_SURREAL_USER", cfg.username],
-    ["DFC_SURREAL_PASS", cfg.password],
-  ];
+  const required: Array<[string, string]> = isEmbeddedUrl(cfg.url)
+    ? [["DFC_SURREAL_URL", cfg.url]] // embedded engines need no credentials
+    : [
+        ["DFC_SURREAL_URL", cfg.url],
+        ["DFC_SURREAL_USER", cfg.username],
+        ["DFC_SURREAL_PASS", cfg.password],
+      ];
   for (const [name, value] of required) {
     if (!value || PLACEHOLDER.test(value)) missing.push(name);
   }
@@ -167,17 +187,25 @@ export function assertUsableConfig(cfg: DfcConfig): void {
   }
 }
 
-/** Connect, select namespace/database, authenticate. Caller closes the handle. */
+/** Connect, select namespace/database, authenticate. Caller closes the handle.
+ *  Embedded URLs (surrealkv://, rocksdb://, mem://) load the @surrealdb/node
+ *  engine lazily and skip authentication — the database lives inside the repo. */
 export async function connect(cfg: DfcConfig): Promise<Surreal> {
   const timeoutMs = numberEnv("DFC_SURREAL_CONNECT_TIMEOUT_MS", DEFAULT_CONNECT_TIMEOUT_MS);
   const attempts = numberEnv("DFC_SURREAL_CONNECT_ATTEMPTS", DEFAULT_CONNECT_ATTEMPTS);
+  const embedded = isEmbeddedUrl(cfg.url);
+  let engines: ConstructorParameters<typeof Surreal>[0] | undefined;
+  if (embedded) {
+    const { createNodeEngines } = await import("@surrealdb/node");
+    engines = { engines: createNodeEngines() };
+  }
   let lastError: unknown;
 
   for (let attempt = 1; attempt <= attempts; attempt++) {
-    const db = new Surreal();
+    const db = new Surreal(engines);
     try {
       await withTimeout("SurrealDB connect", db.connect(cfg.url), timeoutMs);
-      await withTimeout("SurrealDB signin", authenticate(db, cfg), timeoutMs);
+      if (!embedded) await withTimeout("SurrealDB signin", authenticate(db, cfg), timeoutMs);
       await withTimeout("SurrealDB use", db.use({ namespace: cfg.namespace, database: cfg.database }), timeoutMs);
       return db;
     } catch (err) {

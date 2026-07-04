@@ -135,7 +135,8 @@ into one token-budgeted context pack — none replaces BM25 or the graph:
 | --- | --- | --- | --- | --- |
 | Repo files (BM25) | `file` | `pnpm dfc:ingest` | via `/dfc-context` | implemented |
 | Document chunks (BM25) | `document`, `doc_chunk` | `pnpm dfc:docs:ingest` | `pnpm dfc:docs:query` | implemented |
-| Graph (graphify facts) | `graph_snapshot/node/edge/hyperedge` | `pnpm dfc:graph:import` | `pnpm dfc:graph:query`, `dfc:graph:status` | implemented |
+| Graph (direct, Rust) | `graph_snapshot/node/edge/hyperedge` | `pnpm dfc:graph:build` (graphify-surreal → SurrealDB, no JSON step) | `pnpm dfc:graph:query`, `dfc:graph:status`, `dfc:graph:build --query` | implemented |
+| Graph (legacy JSON import) | same tables | `pnpm dfc:graph:import` (graphify graph.json) | same | implemented (fallback) |
 | Vectors (embeddings) | `embedding_model`, `embedding_chunk` | `pnpm dfc:embed` | folded into `/dfc-context` | scaffolding — **approval-gated**, off by default |
 | Runs / decisions / evidence | `agent_run`, `tool_event`, `decision`, `evidence_item` | `pnpm dfc:import-runs`, `pnpm dfc:remember` | via `/dfc-context` | implemented |
 
@@ -323,7 +324,9 @@ prompt to run `/graphify`; no `.agent-runs/` → appears after the first hooked 
 # 1. One-time: install plugin deps
 cd /path/to/dev-flow-control && pnpm install
 
-# 2. Scaffold the target repo (.dfc templates with per-repo DB identity, .gitignore)
+# 2. Scaffold the target repo (.dfc templates with per-repo DB identity, .gitignore,
+#    and the bundled multi-agent workflows dfc-review / dfc-understand / dfc-preship
+#    into .claude/workflows/)
 pnpm dfc:init --repo-root /path/to/your-repo            # add --copy-credentials to reuse
                                                         # the plugin's SurrealDB instance
                                                         # with an isolated per-repo database

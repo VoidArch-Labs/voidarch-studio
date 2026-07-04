@@ -5,7 +5,7 @@
 // Never overwrites existing files unless --force. Never copies credentials unless
 // --copy-credentials is passed explicitly.
 
-import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { parseArgs, repoRootFromArgs } from "../src/memory/cli.js";
 import { REPO_ROOT, parseEnvFile } from "../src/memory/surreal.js";
@@ -107,7 +107,25 @@ function main(): void {
     skipped.push(".gitignore (already covered)");
   }
 
-  // 4. Optional workflow templates.
+  // 4. Workflow-tool scripts → <target>/.claude/workflows/ (skip with --no-workflows).
+  if (args["no-workflows"] !== "true") {
+    const wfSrc = join(REPO_ROOT, "workflows");
+    if (existsSync(wfSrc)) {
+      const wfDst = join(targetRoot, ".claude", "workflows");
+      mkdirSync(wfDst, { recursive: true });
+      let copied = 0;
+      for (const f of readdirSync(wfSrc).filter((f) => f.endsWith(".js"))) {
+        const out = join(wfDst, f);
+        if (existsSync(out) && !force) continue;
+        copyFileSync(join(wfSrc, f), out);
+        copied++;
+      }
+      if (copied) done.push(`.claude/workflows/ (+${copied} workflows: dfc-review, dfc-understand, dfc-preship)`);
+      else skipped.push(".claude/workflows/ (all present)");
+    }
+  }
+
+  // 5. Optional workflow templates.
   for (const [flag, template, outName] of [
     ["claude-md", "CLAUDE.md.template", "CLAUDE.md"],
     ["agents-md", "AGENTS.md.template", "AGENTS.md"],

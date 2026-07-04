@@ -17,6 +17,7 @@
     "dfc:log-tool": "tsx scripts/dfc-log-tool.ts",
     "dfc:docs:ingest": "tsx scripts/dfc-docs-ingest.ts",
     "dfc:docs:query": "tsx scripts/dfc-docs-query.ts",
+    "dfc:graph:build": "tsx scripts/dfc-graph-build.ts",
     "dfc:graph:import": "tsx scripts/dfc-graph-import.ts",
     "dfc:graph:query": "tsx scripts/dfc-graph-query.ts",
     "dfc:graph:status": "tsx scripts/dfc-graph-status.ts",
