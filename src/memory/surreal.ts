@@ -33,7 +33,7 @@ export function resolveRepoRoot(explicit?: string): string {
 }
 
 /** Minimal KEY=VALUE .env parser (no dependency). Ignores blanks and # comments. */
-function parseEnvFile(path: string): Record<string, string> {
+export function parseEnvFile(path: string): Record<string, string> {
   const out: Record<string, string> = {};
   if (!existsSync(path)) return out;
   for (const raw of readFileSync(path, "utf8").split(/\r?\n/)) {
@@ -55,11 +55,20 @@ function parseEnvFile(path: string): Record<string, string> {
 }
 
 /**
- * Resolve configuration. Precedence (highest first):
- *   1. process.env
- *   2. .dfc/surreal.env       (real values, gitignored)
- *   3. .dfc/surreal.example.env (committed template / defaults)
+ * `.dfc/` directory to read config from. When the plugin is installed once and used
+ * across multiple projects (each with its own DFC_REPO_ID/database), the project
+ * actually being worked on must win over this script's own install location —
+ * otherwise every consuming project would silently share the plugin's bundled
+ * credentials/repo_id instead of its own. Prefers CLAUDE_PROJECT_DIR/.dfc/ when that
+ * project has set one up; falls back to this script's own REPO_ROOT/.dfc/ otherwise
+ * (plain CLI usage with no CLAUDE_PROJECT_DIR, or a project with no .dfc/ of its own).
  */
+export function resolveDfcDir(): string {
+  const projectDir = process.env.CLAUDE_PROJECT_DIR;
+  if (projectDir && existsSync(join(projectDir, ".dfc"))) return join(projectDir, ".dfc");
+  return join(REPO_ROOT, ".dfc");
+}
+
 /**
  * Merged KEY=VALUE view of the gitignored .dfc env files, lowest→highest precedence:
  * surreal.example.env (template) < surreal.env (real connection) < embed.env (embedding

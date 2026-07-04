@@ -7,8 +7,8 @@ This delta records the move from an unspecified, plugin-local storage idea to a 
 first slice was built and live-validated in the temporary `dev-flow-control-codex` fork and is
 merged back into the canonical Claude Code plugin repo `dev-flow-control` by this PR, adapted to
 canonical naming. Claude Code remains the canonical local supervisor; Codex and future agents share
-the same CLI and database. BM25 retrieval is implemented; graph, vector, and document memory are
-planned.
+the same CLI and database. BM25, document, graph, and vector retrieval channels are implemented,
+with full OpenAI embedding coverage live-validated on 2026-06-30.
 
 ## Before / After Table
 
@@ -19,8 +19,8 @@ planned.
 | Multi-repo | Not specified as DB model | One namespace, one database per repo |
 | Repo graph | Graphify/equivalent as graph slot | Graph tools produce facts; SurrealDB stores facts |
 | Context | Graph/search/docs routed to Claude | Compact context packs from SurrealDB |
-| Docs | Docs strategy, no chunk memory | Document chunks planned in SurrealDB |
-| Vectors | Research/benchmark candidate | Planned retrieval channel after BM25/docs/graph |
+| Docs | Docs strategy, no chunk memory | Document chunks in SurrealDB |
+| Vectors | Research/benchmark candidate | Approval-gated retrieval channel in SurrealDB |
 | Codex | External-agent instructions | Shared DB through AGENTS.md + pnpm dfc:* |
 | Claude skill | Routing skills | /dfc-context implemented; memory skill suite planned |
 | Observability | Local .agent-runs logs | Import logs/runs/tool events into SurrealDB |
@@ -47,7 +47,7 @@ planned.
 + Memory access: only through repo-local pnpm dfc:* CLI; repo_id on every row
 
 - Status: "feature-complete"
-+ Status: SurrealDB slice validated in Codex fork; canonical plugin still needs live validation
++ Status: SurrealDB slice validated in Codex fork; canonical docs/graph/vector substrate live-validated
 ```
 
 ## Files changed
@@ -90,13 +90,9 @@ Canonical naming applied (fork → canonical): package `dev-flow-control-codex` 
 
 ## Still planned
 
-- Document-chunk ingestion (beyond the `doc_chunk` placeholder).
-- Live DB import of `.agent-runs` (bridge is implemented + dry-run-validated; a live
-  `pnpm dfc:import-runs` run needs `.dfc/surreal.env`).
-- Graph schema, import, and query (graph storage/query is **not** implemented).
-- Vector embeddings and vector indexes (**not** implemented).
-- Hybrid BM25 + vector + graph retrieval.
-- Full Claude memory skill suite.
+- Optional per-model vector indexes for KNN tuning; current retrieval ranks stored vectors with
+  deterministic JS cosine.
+- Live DB import of `.agent-runs` if real session logs are available.
 - Efficiency benchmark before any token-savings claim.
 
 ## Validation
@@ -111,9 +107,10 @@ Canonical naming applied (fork → canonical): package `dev-flow-control-codex` 
   `claude --plugin-dir <repo>` interactively. See
   [`postmerge-validation-and-roadmap.md`](postmerge-validation-and-roadmap.md).
 - No token/efficiency improvement is claimed until the benchmark is run.
-- **docs/graph/vector substrate** (branch `memory/docs-graph-vector-substrate`): document,
-  graph, and vector memory channels + hybrid context-pack retrieval + seven Claude memory
-  skills are implemented and **dry-run + typecheck validated**. Migration `schema/0003` is
-  idempotent/non-destructive. Live SurrealDB validation is pending credentials; live embedding
-  is pending an explicit, approved provider. See
+- **docs/graph/vector substrate** (branch `memory/docs-graph-vector-substrate`, completed
+  through PR #5): document, graph, and vector memory channels + hybrid context-pack retrieval
+  + seven Claude memory skills are implemented and live validated. Migration `schema/0003`
+  is idempotent/non-destructive. On 2026-06-30, the canonical hosted database held 239
+  `doc_chunk` rows, 1 `embedding_model`, and 239 OpenAI `text-embedding-3-small`
+  `embedding_chunk` rows at 1536 dimensions. See
   [`postmerge-validation-and-roadmap.md`](postmerge-validation-and-roadmap.md).

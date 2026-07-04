@@ -11,6 +11,7 @@
 // migration is intentionally dimension-agnostic and defines no MTREE index).
 
 import { createHash } from "node:crypto";
+import { join } from "node:path";
 import { RecordId, type Surreal } from "surrealdb";
 import { buildDocPlan } from "./docs.js";
 import { cosineSimilarity } from "./scoring.js";
@@ -52,6 +53,10 @@ function defaultModel(p: EmbedProvider): string {
   if (p === "ollama") return "nomic-embed-text";
   if (p === "openai") return "text-embedding-3-small";
   return "";
+}
+
+function supportsOpenAiDimensions(model: string): boolean {
+  return model.startsWith("text-embedding-3");
 }
 
 /** Resolve embedding configuration from env (+ optional --approve). Pure. */
@@ -111,7 +116,7 @@ export async function embedText(cfg: EmbedConfig, text: string): Promise<number[
       throw new Error("openai embeddings blocked: requires OPENAI_API_KEY and explicit approval");
     }
     const body: Record<string, unknown> = { model: cfg.model, input: text };
-    if (cfg.dimension > 0) body.dimensions = cfg.dimension; // text-embedding-3-* support reduction
+    if (cfg.dimension > 0 && supportsOpenAiDimensions(cfg.model)) body.dimensions = cfg.dimension;
     const res = await fetch(`${cfg.host}/v1/embeddings`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
@@ -208,13 +213,16 @@ export async function embedChunks(
   let dimension = cfg.dimension;
   const now = new Date().toISOString();
 
-  // If a model is already registered, its dimension is authoritative.
+  // If a model is already registered, its dimension is authoritative unless an
+  // OpenAI v3 model explicitly requested dimensions for this run.
   const registered = await queryResult<EmbeddingModelRecord[]>(
     db,
     `SELECT * FROM embedding_model WHERE repo_id = $repo AND provider = $p AND model = $m LIMIT 1`,
     { repo: repoId, p: cfg.provider, m: cfg.model },
   );
-  if (registered[0]?.dimension) dimension = registered[0].dimension;
+  const requestedOpenAiDimension =
+    cfg.provider === "openai" && supportsOpenAiDimensions(cfg.model) && cfg.dimension > 0;
+  if (registered[0]?.dimension && !requestedOpenAiDimension) dimension = registered[0].dimension;
 
   for (const t of targets) {
     let vec: number[];

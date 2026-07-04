@@ -8,7 +8,8 @@ not run a local database.
 
 - `surreal.example.env` - committed template with placeholder values.
 - `surreal.env` - your real values (create this; it is **gitignored**).
-- `embed.env` - optional embedding provider values, if live vector search is enabled
+- `embed.example.env` - committed embedding provider template (defaults to `DFC_EMBED_PROVIDER=none`).
+- `embed.env` - your real embedding values and API key, only if you enable vectors
   (create this only when needed; it is **gitignored**).
 
 ## Setup (hosted SurrealDB Cloud)
@@ -53,6 +54,20 @@ process.env  >  target .dfc/*.env  >  plugin .dfc/*.env/templates
 | `DFC_SURREAL_USER` | Username                                 | required                 |
 | `DFC_SURREAL_PASS` | Password                                 | required                 |
 | `DFC_SURREAL_AUTH_SCOPE` | `root`, `namespace`, or `database` | `root`                   |
+
+Embedding config uses separate precedence so API keys stay local:
+
+```
+process.env  >  .dfc/embed.env  >  defaults
+```
+
+| Variable              | Meaning                                  | Default                  |
+| --------------------- | ---------------------------------------- | ------------------------ |
+| `DFC_EMBED_PROVIDER`  | `none`, `ollama`, or `openai`            | `none`                   |
+| `DFC_EMBED_MODEL`     | Provider model id                        | `text-embedding-3-small` for OpenAI |
+| `DFC_EMBED_DIMENSION` | Requested/expected vector dimensions     | infer from first vector  |
+| `DFC_EMBED_APPROVED`  | Set `1` to approve paid OpenAI requests  | unset                    |
+| `OPENAI_API_KEY`      | OpenAI API key for local embedding runs  | required for OpenAI      |
 
 ## One instance, many repos
 

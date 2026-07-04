@@ -60,6 +60,17 @@ If `--agent` is omitted, commands default to `manual`. Supported values are `man
 
 Codex compatibility lives here and in `package.json` scripts. Codex should call `pnpm dfc:context` before large discovery work and write durable decisions/evidence through `pnpm dfc:remember`.
 
+## Grok Build
+
+Grok Build is a **manual** external worker, driven via `pnpm dfc:grok-build` (and the
+`/dfc-grok-build` Claude skill, and the `grok-build-worker` agent) — never auto-invoked. It runs
+the local `grok` CLI in subscription/cached-login mode (`XAI_API_KEY` is stripped from its
+environment by the wrapper, so it never bills pay-per-token). A 24h local cooldown
+(`.agent-runs/grok/cooldown.json`) kicks in automatically when Grok reports a
+quota/rate-limit/usage-limit error; clear it with `--clear-cooldown` or bypass once with
+`--force`. `implement` mode requires explicit `--allow-writes`. See
+`.claude/skills/dfc-grok-build/SKILL.md` and `agents/grok-build-worker.md`.
+
 ## Claude Code
 
 Claude compatibility lives under `.claude/skills/`. Seven manual-invoke skills wrap the
@@ -69,7 +80,7 @@ same `pnpm dfc:*` commands and read/write the same SurrealDB database as Codex:
 
 ## External agent rules
 
-External executors (Codex, Jules, future agents) operate under least privilege:
+External executors (Codex, Jules, Grok Build, future agents) operate under least privilege:
 
 - **Open PRs only** unless explicitly told otherwise — never push to protected branches.
 - **Never deploy.**

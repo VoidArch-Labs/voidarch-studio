@@ -13,9 +13,9 @@ Ground rules that hold throughout this spec:
 - **Graphify / SCIP / Tree-sitter are fact producers, not storage backends.** They produce graph
   facts; SurrealDB stores them.
 - **BM25 full-text retrieval is implemented now.**
-- **Vectors are planned, not implemented.**
-- **Graph storage/query is planned, not implemented.**
-- **Document chunks are planned beyond placeholders.**
+- **Vectors are implemented and live-validated, but remain approval-gated.**
+- **Graph storage/query is implemented and live-validated from graphify facts.**
+- **Document chunks are implemented and live-validated.**
 - **The first SurrealDB memory slice was built and live-validated in the temporary
   `dev-flow-control-codex` fork.**
 - **The canonical Claude Code plugin still needs live plugin install / hook validation.**
@@ -51,13 +51,11 @@ identity (`.claude-plugin/`, `skills/`, `agents/`, `hooks/`, `templates/`, `.mcp
   this dev-memory layer in a live session.
 - No end-to-end run has confirmed Claude and Codex sharing one live database from this repo.
 
-### 1.4 Not implemented yet
+### 1.4 Remaining validation gaps
 
-- Vector embeddings and vector indexes.
-- Graph storage and graph queries inside SurrealDB.
-- Document-chunk ingestion beyond schema placeholders.
-- Automated import of Claude hook logs / Codex task summaries into `agent_run` / `tool_event`.
 - The efficiency benchmark needed before any token-savings claim.
+- A live interactive `claude --plugin-dir .` session that confirms plugin skill discovery and hook
+  behavior outside the nested-session guard.
 
 ---
 
@@ -184,14 +182,14 @@ plus a `session` grouping so cross-agent timelines reconstruct cleanly.
 
 ### 5.3 Graph memory
 
-Graph nodes/edges (symbol → symbol, file → file, decision → file) stored as SurrealDB records and
-graph relations. **Planned, not implemented.** Graphify / SCIP / Tree-sitter produce these facts;
-SurrealDB stores them.
+Graph nodes/edges (symbol → symbol, file → file, decision → file) are stored as SurrealDB records
+and graph relations. Graphify / SCIP / Tree-sitter produce these facts; SurrealDB stores them.
 
 ### 5.4 Vector and document memory
 
-`doc_chunk` populated with real chunked text, plus embedding vectors and SurrealDB vector indexes
-for semantic recall. **Planned, not implemented.**
+`doc_chunk` is populated with real chunked text, plus embedding vectors for semantic recall. The
+current vector retrieval path stores embeddings in SurrealDB and ranks with deterministic JS cosine;
+optional per-model MTREE indexes remain future tuning.
 
 ---
 
@@ -241,19 +239,18 @@ Codex, and Codex does not depend on the plugin.
 
 ## 9. Graph and Index Strategy
 
-Implemented today: BM25 full-text indexes (Section 4). Planned: a graph schema (records + relations)
-populated from graphify / SCIP / Tree-sitter output, queryable for dependencies, call chains, and
-impact radius. **Graph tools produce facts; SurrealDB stores facts.** Graph storage and query are
-**planned, not implemented**.
+Implemented today: BM25 full-text indexes (Section 4), document chunks, graph facts, and vector
+embeddings. Graphify / SCIP / Tree-sitter output is imported into SurrealDB and queryable for
+dependencies, call chains, and impact radius. **Graph tools produce facts; SurrealDB stores facts.**
 
 ---
 
 ## 10. Document and Vector Memory
 
-`doc_chunk` exists as a placeholder table with a BM25 index. Real document-chunk ingestion
-(chunking, dedup, provenance) is **planned beyond placeholders**. Vector embeddings and vector
-indexes are **planned, not implemented**. Both become retrieval channels after the BM25/docs/graph
-base is solid.
+`doc_chunk` stores heading-aware chunks with BM25 retrieval, dedupe, and provenance. Vector
+embeddings are stored in `embedding_chunk` behind explicit provider/approval gates and folded into
+`dfc:context` as an additive retrieval channel. Optional vector indexes remain future tuning; the
+current implementation ranks stored vectors with deterministic JS cosine.
 
 ---
 
@@ -318,7 +315,7 @@ later *feed* SurrealDB (e.g. PR metadata), but are not a dependency of the memor
 **SurrealDB is the single shared dev-memory backend. Agents reach it only through the repo-local
 `pnpm dfc:*` CLI — Claude Code via `/dfc-context`, Codex and future agents via `AGENTS.md`. One
 namespace, one database per repo, `repo_id` on every row. BM25 retrieval is live; document, graph,
-and vector memory are implemented (dry-run + typecheck validated; live run pending credentials).
+and vector memory are implemented and live-validated in the canonical hosted database.
 Graphify/SCIP/Tree-sitter produce facts; SurrealDB stores them. Root
 auth bootstraps; scoped credentials run daily. Secrets stay in env or gitignored `.dfc/surreal.env`,
 and `DFC_SURREAL_PASS` is never printed or committed. The slice was validated in the Codex fork; the
@@ -329,8 +326,8 @@ made until the benchmark is run.**
 
 ## 17. Update — docs / graph / vector substrate (branch `memory/docs-graph-vector-substrate`)
 
-The three retrieval channels from §15.2 Acceptance B are now **implemented** (typecheck +
-dry-run validated; live SurrealDB run still pending credentials):
+The three retrieval channels from §15.2 Acceptance B are now **implemented** and live
+validated in the canonical hosted SurrealDB database:
 
 - **Document memory** — `dfc:docs:ingest` / `dfc:docs:query` over heading-chunked markdown
   in `doc_chunk` (parent `document`), reusing the 0002 BM25 index.
@@ -343,6 +340,8 @@ dry-run validated; live SurrealDB run still pending credentials):
   neighborhood + document chunks + vector matches alongside the existing decision/evidence/run
   channels, all under one token budget with graceful degradation.
 
-Migration `schema/0003_documents_graph_vectors.surql` is idempotent and non-destructive. The
-full substrate remains gated on live DB validation and (for vectors) an explicit, approved
-embedding provider. See [`postmerge-validation-and-roadmap.md`](postmerge-validation-and-roadmap.md).
+Migration `schema/0003_documents_graph_vectors.surql` is idempotent and non-destructive.
+On 2026-06-30, an approved OpenAI `text-embedding-3-small` run stored 239
+`embedding_chunk` rows for 239 `doc_chunk` rows at 1536 dimensions; vector retrieval
+returned live `vector_context.chunks`. See
+[`postmerge-validation-and-roadmap.md`](postmerge-validation-and-roadmap.md).

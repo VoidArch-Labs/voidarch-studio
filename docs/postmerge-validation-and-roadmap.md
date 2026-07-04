@@ -78,8 +78,9 @@ once `.dfc/surreal.env` exists; an optional `schema/0003` dedupe index on
 Storage stays **SurrealDB**. Retrieval stays **token-budgeted**. Each stage adds a
 channel; none replaces BM25 or the graph.
 
-> **✅ DELIVERED** in branch `memory/docs-graph-vector-substrate` (PR #3). All three
-> stages below are implemented, typecheck-clean, and dry-run validated. As-built notes:
+> **✅ DELIVERED** in branch `memory/docs-graph-vector-substrate` (PR #3), then live
+> validated after PR #5. All three stages below are implemented, typecheck-clean, and
+> live validated in the canonical hosted SurrealDB database. As-built notes:
 >
 > | Stage | As-built commands | Tables | Notes |
 > | --- | --- | --- | --- |
@@ -93,10 +94,15 @@ channel; none replaces BM25 or the graph.
 > `document_context.chunks`, `vector_context.chunks` added behind graceful degradation.
 >
 > **What is implemented vs gated:**
-> - *Implemented now (typecheck + dry-run):* all code paths above + the seven `.claude/skills/dfc-*`.
+> - *Implemented now (typecheck + live validation):* all code paths above + the seven `.claude/skills/dfc-*`.
 > - *Dry-run only (no creds):* `*:ingest/query/status --dry-run`, `dfc:embed --dry-run`, `dfc:memory:doctor`, `dfc:memory:gc --dry-run`.
 > - *Requires SurrealDB credentials:* every live ingest/import/query/status + `dfc:db:migrate`.
 > - *Requires explicit embedding provider:* `dfc:embed` live; the `openai` path also requires `OPENAI_API_KEY` **and** approval.
+>
+> **Live validation result (2026-06-30):**
+> - `pnpm dfc:embed --limit 1000` embedded 234 remaining chunks after the initial 5-row bounded check, with 0 skips, 0 errors, and dimension 1536.
+> - `pnpm dfc:status` reported `Doc chunks: 239`, `Embedding models: 1`, and `Embedding chunks: 239`.
+> - `pnpm dfc:context --task "Verify full OpenAI text-embedding-3-small vector retrieval after full embedding" --agent codex` returned 6 `vector_context.chunks`.
 >
 > **Run live validation** once `.dfc/surreal.env` exists (URL + user + pass + ns/db):
 > ```bash
@@ -168,10 +174,11 @@ corrected to `wss://host`; once fixed, the host resolved and `/health` returned 
 ## 4. What remains after this layer
 
 - ~~Live canonical SurrealDB validation~~ — **DONE 2026-06-30** (see §3b): migrate + ingest +
-  docs + graph + context + status all passed against the hosted instance.
+  docs + graph + context + status all passed against the hosted instance, plus full OpenAI
+  vector embeddings.
 - **Interactive plugin-session test** — `claude --plugin-dir .` to confirm the seven
   `/dfc-*` skills are offered and hooks fire (blocked here by the nested-session guard).
-- **Live embedding** — only with an explicit, approved provider; choose dimension + model,
-  optionally add a per-model MTREE index for KNN (the 0003 schema is dimension-agnostic).
+- **Vector index tuning** — optionally add a per-model MTREE index for KNN (the 0003
+  schema remains dimension-agnostic; current retrieval uses deterministic JS cosine).
 - Doc-level semantic graph re-extraction (`/graphify --update` or set `GEMINI_API_KEY`).
 - Efficiency benchmark before any token-savings claim (unchanged from prior spec).

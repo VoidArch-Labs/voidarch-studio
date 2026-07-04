@@ -1,6 +1,6 @@
 {
   "name": "dev-flow-control",
-  "version": "0.1.0",
+  "version": "0.2.3",
   "private": true,
   "type": "module",
   "description": "Claude Code plugin with a shared, agent-neutral hosted SurrealDB dev-memory CLI (dfc).",
@@ -23,6 +23,7 @@
     "dfc:embed": "tsx scripts/dfc-embed.ts",
     "dfc:memory:doctor": "tsx scripts/dfc-memory-doctor.ts",
     "dfc:memory:gc": "tsx scripts/dfc-memory-gc.ts",
+    "dfc:grok-build": "tsx scripts/dfc-grok-build.ts",
     "dfc:validate-hooks": "bash scripts/dfc-validate-hooks.sh",
     "typecheck": "tsc --noEmit"
   },
