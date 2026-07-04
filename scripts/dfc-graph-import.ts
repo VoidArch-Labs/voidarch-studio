@@ -57,6 +57,7 @@ async function main(): Promise<void> {
 
 try {
   await main();
+  process.exit(0);
 } catch (err) {
   console.error((err as Error)?.message ?? String(err));
   process.exit(1);

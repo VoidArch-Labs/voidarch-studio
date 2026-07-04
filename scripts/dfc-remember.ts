@@ -1,6 +1,7 @@
-// dfc:remember - store a remembered decision or evidence item.
+// dfc:remember - quick-add a memory item (decision, evidence, lesson, snippet, repo_fact).
 //   pnpm dfc:remember --kind decision --text "Use hosted SurrealDB ..."
-//   pnpm dfc:remember --kind evidence --text "Approval logging must be scoped ..."
+//   pnpm dfc:remember --kind lesson --text "Embedded SurrealKV is single-process ..."
+// Full CRUD (list/search/update/delete) lives in dfc:memory.
 
 import { Table } from "surrealdb";
 import { normalizeSourceAgent } from "../src/memory/agents.js";
@@ -24,8 +25,16 @@ async function main(): Promise<void> {
   const taskGoal = (args.task || args.goal || "").trim();
   const repoRoot = repoRootFromArgs(args);
 
-  if (kind !== "decision" && kind !== "evidence") {
-    console.error('--kind must be "decision" or "evidence"');
+  const tables: Record<string, string> = {
+    decision: "decision",
+    evidence: "evidence_item",
+    lesson: "lesson",
+    snippet: "snippet",
+    repo_fact: "repo_fact",
+  };
+  const table = tables[kind];
+  if (!table) {
+    console.error(`--kind must be one of ${Object.keys(tables).join("|")}`);
     process.exit(2);
   }
   if (!text) {
@@ -33,7 +42,6 @@ async function main(): Promise<void> {
     process.exit(2);
   }
 
-  const table = kind === "decision" ? "decision" : "evidence_item";
   const now = new Date().toISOString();
   const tags = Array.from(new Set([...detectRiskTerms(text), ...tokenize(text).slice(0, 5)]));
 
@@ -61,6 +69,7 @@ async function main(): Promise<void> {
 
 try {
   await main();
+  process.exit(0); // embedded @surrealdb/node engine keeps the event loop alive after close()
 } catch (err) {
   console.error(err);
   process.exit(1);

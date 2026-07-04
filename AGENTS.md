@@ -4,7 +4,7 @@ This repository is the canonical **Claude Code plugin** `dev-flow-control`. **Cl
 
 ## Shared Dev Memory
 
-- Storage: hosted SurrealDB 3.1 is the primary dev-memory database.
+- Storage: embedded SurrealDB (SurrealKV) at `.dfc/dev-memory/` is the default — zero config, no credentials. A hosted SurrealDB instance is optional for shared multi-machine memory. The embedded database is single-process: never run two `dfc` commands concurrently against it.
 - Scope: one namespace can serve many repos; use one database per repo.
 - This repo defaults to:
   - `DFC_SURREAL_NS=dev_flow_control`
@@ -21,7 +21,7 @@ Before broad repo reads, get a task-specific context pack:
 pnpm dfc:context --task "<task goal>" --agent codex
 ```
 
-Use the returned JSON to inspect the listed files and memories first. Do not treat an empty context pack as proof that no relevant code exists.
+Use the returned JSON to inspect the listed files and memories first. Context packs include a `state` section with open tasks and open blockers. Do not treat an empty context pack as proof that no relevant code exists.
 
 ## Commands
 
@@ -29,12 +29,20 @@ Core memory:
 
 ```bash
 pnpm dfc:db:check
-pnpm dfc:db:migrate            # applies schema 0001 + 0002 + 0003
+pnpm dfc:db:migrate            # applies schema 0001 + 0002 + 0003 + 0004
 pnpm dfc:ingest --agent codex
-pnpm dfc:remember --kind decision --text "..." --agent codex
-pnpm dfc:remember --kind evidence --text "..." --agent codex
+pnpm dfc:remember --kind <decision|evidence|lesson|snippet|repo_fact> --text "..." --agent codex
 pnpm dfc:context --task "..." --agent codex
 pnpm dfc:status
+```
+
+Memory CRUD and task/blocker state:
+
+```bash
+pnpm dfc:memory <add|list|search|get|update|delete> --kind <decision|evidence|lesson|snippet|repo_fact>
+pnpm dfc:task <add|list|update|done|get|delete>     # statuses: open|in_progress|blocked|done
+pnpm dfc:blocker <add|list|resolve|get|delete>
+pnpm dfc:metrics [--days 30] [--json]               # memory/run metrics summary
 ```
 
 Document / graph / vector channels (each supports `--dry-run` with no credentials):
@@ -58,7 +66,7 @@ If `--agent` is omitted, commands default to `manual`. Supported values are `man
 
 ## Codex
 
-Codex compatibility lives here and in `package.json` scripts. Codex should call `pnpm dfc:context` before large discovery work and write durable decisions/evidence through `pnpm dfc:remember`.
+Codex compatibility lives here and in `package.json` scripts. Codex should call `pnpm dfc:context` before large discovery work and write durable memories (decisions, evidence, lessons, snippets, repo facts) through `pnpm dfc:remember`.
 
 ## Grok Build
 
@@ -76,7 +84,7 @@ quota/rate-limit/usage-limit error; clear it with `--clear-cooldown` or bypass o
 Claude compatibility lives in the plugin's `skills/` directory (bundled, so any repo that
 loads the plugin gets them). Manual-invoke skills wrap the same `pnpm dfc:*` commands and
 read/write the same SurrealDB database as Codex: `/dfc-context`, `/dfc-remember`,
-`/dfc-search`, `/dfc-status`, `/dfc-ingest`, `/dfc-session-recap`, `/dfc-graph`,
+`/dfc-memory`, `/dfc-search`, `/dfc-status`, `/dfc-ingest`, `/dfc-session-recap`, `/dfc-graph`,
 `/dfc-grok-build`, `/dfc-init`, and `/dfc-dashboard`. They are thin wrappers — the CLI is
 the contract.
 

@@ -10,8 +10,8 @@ Start the dashboard server for the active project in the background:
 
 Then:
 - report the URL it printed (default `http://127.0.0.1:4949`; override with `--port <n>`)
-- tell the user the four tabs: Overview (health checks), Development (dev-memory,
-  approvals), Sessions (.agent-runs observability), Graph (graphify)
+- tell the user the four tabs: Overview (health checks), Development (dev-memory:
+  tasks/blockers/memories/metrics, approvals), Sessions (.agent-runs observability), Graph (graphify)
 - the server is local-only (binds 127.0.0.1) and read-only; stop it with
   `kill $(lsof -ti :4949)` or by closing the terminal
 - if the port is already in use, the previous dashboard is probably still running —

@@ -5,12 +5,15 @@
 import type { Surreal } from "surrealdb";
 import type {
   ContextAgentRunEntry,
+  ContextBlockerEntry,
   ContextDocChunkEntry,
   ContextFileEntry,
   ContextGraphEdgeEntry,
   ContextMemoryEntry,
   ContextPack,
+  ContextSnippetEntry,
   ContextSymbolEntry,
+  ContextTaskStateEntry,
   ContextToolEventEntry,
   ContextVectorChunkEntry,
   Phase,
@@ -72,6 +75,25 @@ interface MemoryRow {
   created_at: unknown;
 }
 
+interface SnippetRow extends MemoryRow {
+  language?: string;
+  source_path?: string;
+}
+
+interface BlockerRow {
+  summary?: string;
+  status?: string;
+  task_goal?: string;
+  session_id?: string;
+  created_at: unknown;
+}
+
+interface TaskStateRow {
+  goal?: string;
+  status?: string;
+  created_at: unknown;
+}
+
 interface AgentRunRow {
   source_agent?: string;
   task_goal?: string;
@@ -111,7 +133,7 @@ function excerpt(content: string, terms: string[], max = 320): string {
 
 async function fetchMemory(
   db: Surreal,
-  table: "decision" | "evidence_item",
+  table: "decision" | "evidence_item" | "lesson" | "repo_fact",
   repoId: string,
   terms: string[],
   riskTerms: string[],
@@ -144,6 +166,76 @@ async function fetchMemory(
     })
     .sort((a, b) => b.score - a.score)
     .slice(0, 10);
+}
+
+async function fetchSnippets(
+  db: Surreal,
+  repoId: string,
+  terms: string[],
+  riskTerms: string[],
+  now: number,
+): Promise<ContextSnippetEntry[]> {
+  const rows = await queryResult<SnippetRow[]>(
+    db,
+    `SELECT summary, text, tags, source_agent, language, source_path, created_at FROM snippet
+     WHERE repo_id = $repo ORDER BY created_at DESC LIMIT 40`,
+    { repo: repoId },
+  );
+  return rows
+    .map((r) => {
+      const createdIso = toIso(r.created_at);
+      const ageDays = createdIso
+        ? Math.max(0, (now - new Date(createdIso).getTime()) / 86_400_000)
+        : 9999;
+      const summary = r.summary || (r.text || "").slice(0, 120);
+      return {
+        summary,
+        tags: Array.isArray(r.tags) ? (r.tags as string[]) : [],
+        source_agent: r.source_agent || "manual",
+        created_at: createdIso,
+        excerpt: excerpt(r.text || "", terms),
+        language: r.language || undefined,
+        source_path: r.source_path || undefined,
+        score: scoreMemory(
+          { summary, text: r.text || "", ageDays },
+          terms,
+          riskTerms,
+        ),
+      };
+    })
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 10);
+}
+
+async function fetchOpenBlockers(db: Surreal, repoId: string): Promise<ContextBlockerEntry[]> {
+  const rows = await queryResult<BlockerRow[]>(
+    db,
+    `SELECT summary, status, task_goal, session_id, created_at FROM blocker
+     WHERE repo_id = $repo AND status = 'open' ORDER BY created_at DESC LIMIT 10`,
+    { repo: repoId },
+  );
+  return rows.map((r) => ({
+    summary: r.summary || "",
+    status: r.status || "open",
+    created_at: toIso(r.created_at),
+    task_goal: r.task_goal || undefined,
+    session_id: r.session_id || undefined,
+  }));
+}
+
+async function fetchOpenTasks(db: Surreal, repoId: string): Promise<ContextTaskStateEntry[]> {
+  const rows = await queryResult<TaskStateRow[]>(
+    db,
+    `SELECT goal, status, created_at FROM task
+     WHERE repo_id = $repo AND status IN ['open', 'in_progress', 'blocked']
+     ORDER BY created_at DESC LIMIT 10`,
+    { repo: repoId },
+  );
+  return rows.map((r) => ({
+    goal: r.goal || "",
+    status: r.status || "open",
+    created_at: toIso(r.created_at),
+  }));
 }
 
 async function fetchAgentRuns(
@@ -301,6 +393,37 @@ export async function buildContextPack(
   const now = Date.now();
   const decisions = await fetchMemory(db, "decision", repoId, terms, riskTerms, now);
   const evidence = await fetchMemory(db, "evidence_item", repoId, terms, riskTerms, now);
+  // New-kind tables (0004) may not exist pre-migration; degrade to [] like docChunks.
+  let lessons: ContextMemoryEntry[] = [];
+  try {
+    lessons = await fetchMemory(db, "lesson", repoId, terms, riskTerms, now);
+  } catch {
+    lessons = [];
+  }
+  let repoFacts: ContextMemoryEntry[] = [];
+  try {
+    repoFacts = await fetchMemory(db, "repo_fact", repoId, terms, riskTerms, now);
+  } catch {
+    repoFacts = [];
+  }
+  let snippets: ContextSnippetEntry[] = [];
+  try {
+    snippets = await fetchSnippets(db, repoId, terms, riskTerms, now);
+  } catch {
+    snippets = [];
+  }
+  let openBlockers: ContextBlockerEntry[] = [];
+  try {
+    openBlockers = await fetchOpenBlockers(db, repoId);
+  } catch {
+    openBlockers = [];
+  }
+  let openTasks: ContextTaskStateEntry[] = [];
+  try {
+    openTasks = await fetchOpenTasks(db, repoId);
+  } catch {
+    openTasks = [];
+  }
   const recentRuns = await fetchAgentRuns(db, repoId, terms, riskTerms, now);
   const recentToolEvents = await fetchToolEvents(db, repoId, terms, riskTerms, now);
 
@@ -381,7 +504,8 @@ export async function buildContextPack(
     repo_context: { files: [], symbols: [], graph_neighborhood: [] },
     document_context: { chunks: [] },
     vector_context: { chunks: [] },
-    memory_context: { decisions: [], evidence: [] },
+    memory_context: { decisions: [], evidence: [], lessons: [], repo_facts: [], snippets: [] },
+    state: { open_blockers: [], open_tasks: [] },
     verification: { last_failures: lastFailures.slice(0, 5) },
     workflow: { approval_required: approvalRequired, approval_available: approvalAvailable },
     agent_context: { recent_runs: [], recent_tool_events: [] },
@@ -439,6 +563,51 @@ export async function buildContextPack(
       continue;
     }
     pack.memory_context.evidence.push(e);
+    tokens += cost;
+  }
+  for (const l of lessons) {
+    const cost = estimateTokens(l.summary);
+    if (tokens + cost > TARGET_TOKENS) {
+      dropped.push(`lesson:${l.summary.slice(0, 40)}`);
+      continue;
+    }
+    pack.memory_context.lessons.push(l);
+    tokens += cost;
+  }
+  for (const rf of repoFacts) {
+    const cost = estimateTokens(rf.summary);
+    if (tokens + cost > TARGET_TOKENS) {
+      dropped.push(`repo_fact:${rf.summary.slice(0, 40)}`);
+      continue;
+    }
+    pack.memory_context.repo_facts.push(rf);
+    tokens += cost;
+  }
+  for (const sn of snippets) {
+    const cost = estimateTokens(`${sn.summary} ${sn.excerpt}`);
+    if (tokens + cost > TARGET_TOKENS) {
+      dropped.push(`snippet:${sn.summary.slice(0, 40)}`);
+      continue;
+    }
+    pack.memory_context.snippets.push(sn);
+    tokens += cost;
+  }
+  for (const b of openBlockers) {
+    const cost = estimateTokens(`${b.summary} ${b.task_goal ?? ""}`);
+    if (tokens + cost > TARGET_TOKENS) {
+      dropped.push(`blocker:${b.summary.slice(0, 40)}`);
+      continue;
+    }
+    pack.state.open_blockers.push(b);
+    tokens += cost;
+  }
+  for (const t of openTasks) {
+    const cost = estimateTokens(`${t.goal} ${t.status}`);
+    if (tokens + cost > TARGET_TOKENS) {
+      dropped.push(`task_state:${t.goal.slice(0, 40)}`);
+      continue;
+    }
+    pack.state.open_tasks.push(t);
     tokens += cost;
   }
   for (const ge of graphEdges) {

@@ -10,7 +10,15 @@ import type { Surreal } from "surrealdb";
 import { parseArgs, repoRootFromArgs } from "../src/memory/cli.js";
 import { buildDocPlan } from "../src/memory/docs.js";
 import { graphStatusLocal } from "../src/memory/graph.js";
-import { assertUsableConfig, connect, loadConfig } from "../src/memory/surreal.js";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import {
+  assertUsableConfig,
+  connect,
+  embeddedDataDir,
+  isEmbeddedUrl,
+  loadConfig,
+} from "../src/memory/surreal.js";
 import {
   countRows,
   findGcCandidates,
@@ -20,6 +28,7 @@ import {
 
 const DB_TABLES = [
   "file", "document", "doc_chunk", "decision", "evidence_item",
+  "task", "blocker", "lesson", "snippet", "repo_fact",
   "agent_run", "tool_event", "graph_snapshot", "graph_node", "graph_edge",
   "embedding_model", "embedding_chunk",
 ];
@@ -33,8 +42,18 @@ async function main(): Promise<void> {
   const docPlan = buildDocPlan(root, cfg.repoId, "manual", new Date().toISOString());
   const graph = graphStatusLocal(root);
 
+  const embedded = isEmbeddedUrl(cfg.url);
+  const dataDir = embedded ? embeddedDataDir(cfg.url) : null;
+  const lockPresent = dataDir !== null && existsSync(join(dataDir, "LOCK"));
+
   const report: Record<string, unknown> = {
     repo_id: cfg.repoId,
+    engine: {
+      mode: embedded ? "embedded" : "hosted",
+      // Embedded: local data dir. Hosted: endpoint host only — never credentials.
+      location: embedded ? (dataDir ?? "(in-memory)") : cfg.url,
+      lock_file_present: lockPresent,
+    },
     local: {
       ingestible_documents: docPlan.stats.documents,
       ingestible_chunks: docPlan.stats.chunks,
@@ -93,6 +112,12 @@ async function main(): Promise<void> {
   const dbsec = report.database as Record<string, unknown>;
   console.log("dfc:memory:doctor");
   console.log(`  repo_id:            ${cfg.repoId}`);
+  console.log(`  engine:             ${embedded ? `embedded (${dataDir ?? "in-memory"})` : `hosted (${cfg.url})`}`);
+  if (lockPresent) {
+    console.log(
+      "  lock file:          present — if commands hang or time out, a concurrent or hung dfc process may hold the database (SurrealKV is single-process)",
+    );
+  }
   console.log("  -- local (no DB) --");
   console.log(`  ingestible docs:    ${local.ingestible_documents} (${local.ingestible_chunks} chunks)`);
   console.log(`  graph present:      ${local.graph_present} (fresh=${local.graph_fresh}, nodes=${local.graph_nodes}, edges=${local.graph_edges})`);
@@ -112,7 +137,9 @@ async function main(): Promise<void> {
 
 try {
   await main();
+  process.exit(0);
 } catch (err) {
   // Doctor should not hard-fail; report and exit 0 so it is safe in CI/dry validation.
   console.error(`dfc:memory:doctor warning: ${(err as Error)?.message ?? String(err)}`);
+  process.exit(0);
 }

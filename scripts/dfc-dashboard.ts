@@ -5,14 +5,15 @@
 // Local-first: works with no SurrealDB credentials (memory panel degrades to "off").
 // Sources: .agent-runs/ observability logs, graphify-out/ repo graph, plugin health
 // (manifest/hooks/skills/agents), git state, and — when creds exist — SurrealDB
-// dev-memory (table counts, recent decisions/evidence/agent runs).
+// dev-memory (table counts, open tasks/blockers, recent memories, deep metrics).
 
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { createServer } from "node:http";
 import { extname, join, normalize } from "node:path";
 import { parseArgs, repoRootFromArgs } from "../src/memory/cli.js";
-import { REPO_ROOT, loadConfig, queryResult, withDb } from "../src/memory/surreal.js";
+import { type DfcMetrics, collectMetrics } from "../src/memory/metrics.js";
+import { REPO_ROOT, isEmbeddedUrl, loadConfig, queryResult, withDb } from "../src/memory/surreal.js";
 
 // Short timeouts for an interactive dashboard (only if the user has not overridden).
 process.env.DFC_SURREAL_CONNECT_TIMEOUT_MS ??= "8000";
@@ -133,8 +134,9 @@ function collectHealth(repoRoot: string): Health[] {
 
   const cfg = loadConfig({ repoRoot });
   const placeholder = /<[^>]+>/;
-  const memoryConfigured = Boolean(cfg.url && cfg.username && cfg.password) &&
-    !placeholder.test(cfg.url + cfg.username + cfg.password);
+  const memoryConfigured = Boolean(cfg.url) && !placeholder.test(cfg.url) &&
+    (isEmbeddedUrl(cfg.url) ||
+      (Boolean(cfg.username && cfg.password) && !placeholder.test(cfg.username + cfg.password)));
   checks.push(
     memoryConfigured
       ? { name: "Dev-memory config", status: "ok", detail: `${cfg.database} @ ${cfg.url.replace(/^wss?:\/\//, "")}` }
@@ -222,6 +224,12 @@ interface MemoryPanel {
   decisions?: Array<Record<string, unknown>>;
   evidence?: Array<Record<string, unknown>>;
   agent_runs?: Array<Record<string, unknown>>;
+  open_tasks?: Array<Record<string, unknown>>;
+  open_blockers?: Array<Record<string, unknown>>;
+  lessons?: Array<Record<string, unknown>>;
+  repo_facts?: Array<Record<string, unknown>>;
+  snippets?: Array<Record<string, unknown>>;
+  metrics?: DfcMetrics;
 }
 
 let memoryCache: { at: number; value: MemoryPanel } | undefined;
@@ -231,31 +239,73 @@ async function collectMemory(repoRoot: string, fresh: boolean): Promise<MemoryPa
   if (!fresh && memoryCache && Date.now() - memoryCache.at < MEMORY_TTL_MS) return memoryCache.value;
   const cfg = loadConfig({ repoRoot });
   const placeholder = /<[^>]+>/;
-  if (!cfg.url || !cfg.username || !cfg.password || placeholder.test(cfg.url + cfg.username + cfg.password)) {
+  const embedded = cfg.url ? isEmbeddedUrl(cfg.url) : false;
+  if (
+    !cfg.url ||
+    placeholder.test(cfg.url) ||
+    (!embedded && (!cfg.username || !cfg.password || placeholder.test(cfg.username + cfg.password)))
+  ) {
     return { available: false, error: "not configured" };
   }
   let value: MemoryPanel;
   try {
     value = await withDb(async (db, c) => {
       const counts: Record<string, number> = {};
-      for (const table of ["file", "doc_chunk", "decision", "evidence_item", "agent_run", "tool_event", "graph_node", "embedding_chunk"]) {
-        const rows = await queryResult<Array<{ c?: number }>>(
-          db, "SELECT count() AS c FROM type::table($t) GROUP ALL", { t: table });
-        counts[table] = rows[0]?.c ?? 0;
+      for (const table of ["file", "doc_chunk", "decision", "evidence_item", "agent_run", "tool_event", "graph_node", "embedding_chunk", "task", "blocker", "lesson", "snippet", "repo_fact"]) {
+        try {
+          const rows = await queryResult<Array<{ c?: number }>>(
+            db, "SELECT count() AS c FROM type::table($t) GROUP ALL", { t: table });
+          counts[table] = rows[0]?.c ?? 0;
+        } catch {
+          counts[table] = 0;
+        }
       }
-      const recent = (table: string) =>
-        queryResult<Array<Record<string, unknown>>>(
+      const recent = async (table: string): Promise<Array<Record<string, unknown>>> => {
+        try {
+          return await queryResult<Array<Record<string, unknown>>>(
+            db,
+            `SELECT summary, tags, source_agent, created_at FROM type::table($t) WHERE repo_id = $repo ORDER BY created_at DESC LIMIT 5`,
+            { t: table, repo: c.repoId },
+          );
+        } catch {
+          return [];
+        }
+      };
+      const [decisions, evidence, lessons, repo_facts, snippets] = await Promise.all([
+        recent("decision"), recent("evidence_item"), recent("lesson"), recent("repo_fact"), recent("snippet"),
+      ]);
+      let agent_runs: Array<Record<string, unknown>> = [];
+      try {
+        agent_runs = await queryResult<Array<Record<string, unknown>>>(
           db,
-          `SELECT summary, tags, source_agent, created_at FROM type::table($t) WHERE repo_id = $repo ORDER BY created_at DESC LIMIT 5`,
-          { t: table, repo: c.repoId },
+          "SELECT source_agent, task_goal, status, summary, created_at FROM agent_run WHERE repo_id = $repo ORDER BY created_at DESC LIMIT 5",
+          { repo: c.repoId },
         );
-      const [decisions, evidence] = await Promise.all([recent("decision"), recent("evidence_item")]);
-      const agent_runs = await queryResult<Array<Record<string, unknown>>>(
-        db,
-        "SELECT source_agent, task_goal, status, summary, created_at FROM agent_run WHERE repo_id = $repo ORDER BY created_at DESC LIMIT 5",
-        { repo: c.repoId },
-      );
-      return { available: true, counts, decisions, evidence, agent_runs } satisfies MemoryPanel;
+      } catch { /* degrade to empty */ }
+      let open_tasks: Array<Record<string, unknown>> = [];
+      try {
+        open_tasks = await queryResult<Array<Record<string, unknown>>>(
+          db,
+          "SELECT goal, status, created_at FROM task WHERE repo_id = $repo AND status IN ['open', 'in_progress', 'blocked'] ORDER BY created_at ASC LIMIT 20",
+          { repo: c.repoId },
+        );
+      } catch { /* degrade to empty */ }
+      let open_blockers: Array<Record<string, unknown>> = [];
+      try {
+        open_blockers = await queryResult<Array<Record<string, unknown>>>(
+          db,
+          "SELECT text, summary, created_at FROM blocker WHERE repo_id = $repo AND status = 'open' ORDER BY created_at ASC LIMIT 20",
+          { repo: c.repoId },
+        );
+      } catch { /* degrade to empty */ }
+      let metrics: DfcMetrics | undefined;
+      try {
+        metrics = await collectMetrics(db, c.repoId);
+      } catch { /* metrics panel degrades to absent */ }
+      return {
+        available: true, counts, decisions, evidence, agent_runs,
+        open_tasks, open_blockers, lessons, repo_facts, snippets, metrics,
+      } satisfies MemoryPanel;
     }, { repoRoot });
   } catch (err) {
     value = { available: false, error: (err as Error).message };
@@ -358,6 +408,13 @@ let state = null, tab = 'overview';
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const pill = (s) => '<span class="pill ' + s + '">' + s.toUpperCase() + '</span>';
 const ts = (s) => s ? esc(String(s).replace('T',' ').slice(0,19)) : '';
+const age = (s) => {
+  const t = Date.parse(String(s ?? ''));
+  if (!Number.isFinite(t)) return '';
+  const d = Math.max(0, Math.floor((Date.now() - t) / 86400000));
+  return d === 0 ? '<1d' : d + 'd';
+};
+const kv = (obj) => Object.entries(obj || {}).map(([k,v]) => esc(k) + ': <b>' + esc(v) + '</b>').join(' · ') || '<span class="dim">none</span>';
 
 function renderOverview() {
   const h = state.health.map(c =>
@@ -381,6 +438,29 @@ function memTable(rows, cols) {
     rows.map(r => '<tr>' + cols.map(c => '<td>' + (c==='created_at'?ts(r[c]):esc(Array.isArray(r[c])?r[c].join(', '):r[c])) + '</td>').join('') + '</tr>').join('') + '</table>';
 }
 
+function renderMetrics(x) {
+  if (!x) return '';
+  const growth = Object.entries(x.memories || {}).map(([k,v]) =>
+    '<tr><td>' + esc(k) + '</td><td>' + v.last_7_days + '</td><td>' + v.last_30_days + '</td></tr>').join('');
+  const tools = (x.tool_activity.by_tool || []).map(t =>
+    '<tr><td class="mono">' + esc(t.tool_name) + '</td><td>' + t.count + '</td><td>' + t.ok + '</td><td>' + t.fail + '</td></tr>').join('');
+  return '<div class="card" style="margin-top:12px"><h3>Metrics (last ' + x.days + ' days)</h3>' +
+    '<div><b>Runs:</b> ' + x.runs.total + ' <span class="dim">(' + kv(x.runs.by_status) + ')</span></div>' +
+    '<div><b>Tasks:</b> ' + kv(x.tasks.by_status) +
+      (x.tasks.oldest_open_age_days != null ? ' <span class="dim">· oldest open ' + x.tasks.oldest_open_age_days + 'd</span>' : '') + '</div>' +
+    '<div><b>Blockers:</b> open <b>' + x.blockers.open + '</b> · resolved <b>' + x.blockers.resolved + '</b>' +
+      (x.blockers.oldest_open_age_days != null ? ' <span class="dim">· oldest open ' + x.blockers.oldest_open_age_days + 'd</span>' : '') + '</div>' +
+    '<div><b>Retrieval:</b> ' + x.retrieval.total + ' packs · ' + x.retrieval.last_7_days + ' last 7d' +
+      (x.retrieval.avg_estimated_tokens != null ? ' · avg ~' + x.retrieval.avg_estimated_tokens + ' tokens' : '') + '</div>' +
+    '<div><b>Stale:</b> ' + x.stale.open_tasks_over_14_days.count + ' tasks open &gt;14d · ' +
+      x.stale.open_blockers_over_7_days.count + ' blockers open &gt;7d</div>' +
+    '<h3 style="margin-top:10px">Memory growth</h3>' +
+    (growth ? '<table><tr><th>kind</th><th>7d</th><th>30d</th></tr>' + growth + '</table>' : '<div class="dim">none</div>') +
+    '<h3 style="margin-top:10px">Tool activity (' + x.tool_activity.total + ' events)</h3>' +
+    (tools ? '<table><tr><th>tool</th><th>count</th><th>ok</th><th>fail</th></tr>' + tools + '</table>' : '<div class="dim">none</div>') +
+    '</div>';
+}
+
 function renderDev() {
   const m = state.memory;
   let mem;
@@ -389,11 +469,24 @@ function renderDev() {
           ' <span class="dim">' + esc(m.error || '') + '</span></div>';
   } else {
     const counts = Object.entries(m.counts).map(([k,v]) => k + ': <b>' + v + '</b>').join(' · ');
+    const tasks = (m.open_tasks || []).length
+      ? '<table><tr><th>goal</th><th>status</th><th>age</th></tr>' +
+        m.open_tasks.map(t => '<tr><td>' + esc(t.goal) + '</td><td>' + esc(t.status) + '</td><td>' + age(t.created_at) + '</td></tr>').join('') + '</table>'
+      : '<div class="dim">none</div>';
+    const blockers = (m.open_blockers || []).length
+      ? '<table><tr><th>blocker</th><th>age</th></tr>' +
+        m.open_blockers.map(b => '<tr><td>' + esc(b.text || b.summary) + '</td><td>' + age(b.created_at) + '</td></tr>').join('') + '</table>'
+      : '<div class="dim">none</div>';
     mem = '<div class="card"><h3>Dev-memory (SurrealDB)</h3><div class="dim">' + counts + '</div>' +
+      '<h3 style="margin-top:10px">Open tasks</h3>' + tasks +
+      '<h3 style="margin-top:10px">Open blockers</h3>' + blockers +
       '<h3 style="margin-top:10px">Recent decisions</h3>' + memTable(m.decisions, ['summary','source_agent','created_at']) +
       '<h3 style="margin-top:10px">Recent evidence</h3>' + memTable(m.evidence, ['summary','source_agent','created_at']) +
+      '<h3 style="margin-top:10px">Recent lessons</h3>' + memTable(m.lessons, ['summary','source_agent','created_at']) +
+      '<h3 style="margin-top:10px">Recent repo facts</h3>' + memTable(m.repo_facts, ['summary','source_agent','created_at']) +
+      '<h3 style="margin-top:10px">Recent snippets</h3>' + memTable(m.snippets, ['summary','source_agent','created_at']) +
       '<h3 style="margin-top:10px">Recent agent runs</h3>' + memTable(m.agent_runs, ['task_goal','status','source_agent','created_at']) +
-      '</div>';
+      '</div>' + renderMetrics(m.metrics);
   }
   const appr = state.approvals.length
     ? '<table><tr><th>file</th><th>tool_pattern</th><th>expires</th></tr>' +

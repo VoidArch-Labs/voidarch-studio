@@ -35,8 +35,9 @@ live-validated.
 ## Shared dev-memory (agent-neutral SurrealDB `dfc` CLI)
 
 `dev-flow-control` remains the canonical **Claude Code plugin** repo. Alongside the plugin it
-ships a shared, **agent-neutral** dev-memory CLI (`pnpm dfc:*`) backed by **hosted SurrealDB** —
-one per-repo dev-memory database that every agent reads and writes:
+ships a shared, **agent-neutral** dev-memory CLI (`pnpm dfc:*`) backed by **SurrealDB** —
+embedded SurrealKV inside the repo by default (zero config), or a hosted instance for
+shared multi-machine memory. One per-repo dev-memory database that every agent reads and writes:
 
 - **Claude Code** compatibility is supported through
   [`skills/dfc-context/SKILL.md`](skills/dfc-context/SKILL.md) (the `/dfc-context`
@@ -50,19 +51,27 @@ Architecture and rationale: [`docs/dev-flow-control-spec.md`](docs/dev-flow-cont
 [`docs/spec-delta-surrealdb.md`](docs/spec-delta-surrealdb.md), and
 [`docs/dev-memory-surreal-first-round.md`](docs/dev-memory-surreal-first-round.md).
 
-### Quickstart
+### Quickstart (zero config — embedded SurrealKV)
+
+The default backend is an **embedded SurrealDB (SurrealKV)** database at
+`.dfc/dev-memory/` inside the repo — no server, no credentials, nothing to copy:
 
 ```bash
 pnpm install
-cp .dfc/surreal.example.env .dfc/surreal.env
-pnpm dfc:db:check
 pnpm dfc:db:migrate
 pnpm dfc:ingest --agent claude
 pnpm dfc:context --task "Inspect the plugin architecture" --agent claude
 ```
 
-`.dfc/surreal.env` is gitignored — never commit real credentials, and never print or commit
-`DFC_SURREAL_PASS`. Canonical defaults: `DFC_SURREAL_NS=dev_flow_control`,
+One constraint: SurrealKV allows **one process at a time** (a `LOCK` file in the data
+directory). Never run two `dfc` commands concurrently against the same embedded database —
+a second command waits, then fails with a lock-timeout error. A killed process can leave
+the database briefly locked.
+
+**Hosted alternative** (shared multi-machine memory): copy
+`.dfc/surreal.example.env` to `.dfc/surreal.env`, uncomment the `wss://` block, and fill
+in real values. `.dfc/surreal.env` is gitignored — never commit real credentials, and
+never print or commit `DFC_SURREAL_PASS`. Canonical defaults: `DFC_SURREAL_NS=dev_flow_control`,
 `DFC_SURREAL_DB=repo_dev_flow_control`, `DFC_REPO_ID=dev-flow-control`.
 
 ### Target repo mode
@@ -104,6 +113,7 @@ Target repos should ignore local memory config and generated state:
 ```gitignore
 .dfc/*.env
 !.dfc/*.example.env
+.dfc/dev-memory/
 graphify-out/
 .agent-runs/
 ```
@@ -138,27 +148,39 @@ into one token-budgeted context pack — none replaces BM25 or the graph:
 | Graph (direct, Rust) | `graph_snapshot/node/edge/hyperedge` | `pnpm dfc:graph:build` (graphify-surreal → SurrealDB, no JSON step) | `pnpm dfc:graph:query`, `dfc:graph:status`, `dfc:graph:build --query` | implemented |
 | Graph (legacy JSON import) | same tables | `pnpm dfc:graph:import` (graphify graph.json) | same | implemented (fallback) |
 | Vectors (embeddings) | `embedding_model`, `embedding_chunk` | `pnpm dfc:embed` | folded into `/dfc-context` | scaffolding — **approval-gated**, off by default |
-| Runs / decisions / evidence | `agent_run`, `tool_event`, `decision`, `evidence_item` | `pnpm dfc:import-runs`, `pnpm dfc:remember` | via `/dfc-context` | implemented |
+| Memories (5 kinds) | `decision`, `evidence_item`, `lesson`, `snippet`, `repo_fact` | `pnpm dfc:remember`, `pnpm dfc:memory` | `pnpm dfc:memory search`, via `/dfc-context` | implemented |
+| Task / blocker state | `task`, `blocker` | `pnpm dfc:task`, `pnpm dfc:blocker` | same CLIs; open items appear in `/dfc-context` `state` | implemented |
+| Runs | `agent_run`, `tool_event` | `pnpm dfc:import-runs` | via `/dfc-context` | implemented |
 
 `pnpm dfc:context` fuses all available channels (files + symbols + graph neighborhood +
 document chunks + vector matches + decisions/evidence + recent runs) with deterministic
 scoring and a token budget; any unavailable channel degrades to an empty array.
 
+Two utility commands round out the CLI:
+
+- `pnpm dfc:metrics [--days 30] [--json]` — summary of memory and run metrics.
+- `pnpm dfc:sync --to <url>` / `--from <url>` — one-way copy of the repo-scoped tables
+  between the embedded database and a hosted SurrealDB instance (supports `--dry-run`).
+  Use it to promote local memory to a shared hosted instance, or pull it back down.
+
 **Claude memory skills** (manual-invoke, bundled in the plugin under `skills/`): `/dfc-context`,
-`/dfc-remember`, `/dfc-search`, `/dfc-status`, `/dfc-ingest`, `/dfc-session-recap`, `/dfc-graph`.
+`/dfc-remember`, `/dfc-memory`, `/dfc-search`, `/dfc-status`, `/dfc-ingest`, `/dfc-session-recap`,
+`/dfc-graph`.
 
 ### Dev-memory status
 
 **Implemented now (typecheck + dry-run validated):** document, graph, and vector
-**code paths**; hybrid context-pack retrieval; the seven Claude memory skills; migration
-`schema/0003_documents_graph_vectors.surql`.
+**code paths**; hybrid context-pack retrieval; the Claude memory skills; migrations
+`schema/0003_documents_graph_vectors.surql` and `schema/0004_state_memory_kinds.surql`
+(task/blocker state + the lesson/snippet/repo_fact memory kinds).
 
 **Dry-run only (no credentials needed):** `dfc:docs:ingest --dry-run`,
 `dfc:docs:query --dry-run`, `dfc:graph:status --dry-run`, `dfc:graph:query --dry-run`,
 `dfc:embed --dry-run`, `dfc:memory:doctor`, `dfc:memory:gc --dry-run`.
 
-**Requires SurrealDB credentials** (`.dfc/surreal.env` or `DFC_SURREAL_*`): every live
-`ingest`/`import`/`query`/`status` path and `pnpm dfc:db:migrate`.
+**Requires a database:** every live `ingest`/`import`/`query`/`status` path and
+`pnpm dfc:db:migrate`. The embedded SurrealKV default needs no credentials; hosted mode
+needs `.dfc/surreal.env` or `DFC_SURREAL_*`.
 
 **Requires an explicit embedding provider** (`DFC_EMBED_PROVIDER=ollama|openai`): `dfc:embed`
 live. The paid path (`openai`) **also** needs `OPENAI_API_KEY` **and** approval
@@ -309,7 +331,8 @@ Local-only (binds 127.0.0.1), read-only, no extra dependencies. Four tabs:
 
 - **Overview** — live health checks: plugin manifest, hook scripts present, `jq`, bundled
   skills/agents counts, repo-graph freshness, `.agent-runs/` observability, dev-memory config.
-- **Development** — SurrealDB dev-memory (table counts, recent decisions/evidence/agent runs,
+- **Development** — SurrealDB dev-memory (table counts; recent tasks, blockers, decisions,
+  evidence, lessons, snippets, repo facts, and agent runs; metrics summary;
   60s cache + manual refresh) and scoped approval records.
 - **Sessions** — `.agent-runs/sessions/` per-session tool activity, verification and
   graph-scan markers, recent tool events.

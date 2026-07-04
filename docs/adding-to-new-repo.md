@@ -13,10 +13,20 @@ cd /path/to/your-repo && claude --plugin-dir /path/to/dev-flow-control
 
 `dfc:init` performs the "Target Repo Files" and `.gitignore` steps below automatically
 (idempotent; never overwrites without `--force`; `--copy-credentials` reuses the plugin's
-SurrealDB instance with an isolated per-repo database). Then verify with
+hosted SurrealDB instance with an isolated per-repo database). Then verify with
 `pnpm dfc:db:check --repo-root …` and open the dashboard with
 `pnpm dfc:dashboard --repo-root …`. The rest of this document is the manual equivalent
 and the validation detail.
+
+The default backend is **embedded SurrealKV** at `<repo>/.dfc/dev-memory/` — no server,
+no credentials, works with no `.dfc/surreal.env` at all. One constraint: SurrealKV allows
+one process at a time (a `LOCK` file in the data dir), so never run two `dfc` commands
+concurrently against the same repo; a killed process can leave the database briefly
+locked. Use the hosted `wss://` mode only when you want shared multi-machine memory.
+
+To move memory already collected in the embedded database to a hosted instance later,
+use `pnpm dfc:sync --to <wss-url> --repo-root /path/to/repo` (one-way copy of the
+repo-scoped tables; `--from <url>` pulls the other way; `--dry-run` previews).
 
 ## Core Rules
 
@@ -46,16 +56,20 @@ chmod 700 .dfc
 chmod 600 .dfc/*.env
 ```
 
-Set repo-specific identity in `.dfc/surreal.env`:
+Set repo-specific identity in `.dfc/surreal.env` (embedded default — no credentials):
 
 ```dotenv
+DFC_SURREAL_URL=surrealkv://.dfc/dev-memory
 DFC_SURREAL_NS=dev_flow_control
 DFC_SURREAL_DB=repo_my_app
 DFC_REPO_ID=my-app
 ```
 
-Keep connection credentials in the same file or inject them through the process
-environment:
+The relative `surrealkv://` path resolves against the target repo root, so the data
+lives at `<repo>/.dfc/dev-memory/`.
+
+For the hosted mode, replace the URL and add credentials in the same file or inject
+them through the process environment:
 
 ```dotenv
 DFC_SURREAL_URL=wss://...
@@ -75,6 +89,7 @@ Add these patterns to the target repo:
 ```gitignore
 .dfc/*.env
 !.dfc/*.example.env
+.dfc/dev-memory/
 graphify-out/
 .agent-runs/
 ```

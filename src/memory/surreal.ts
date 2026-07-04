@@ -10,6 +10,11 @@ import type { DfcConfig } from "./types.js";
 
 const moduleDir = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_CONNECT_TIMEOUT_MS = 60_000;
+// Embedded SurrealKV is a local file open — if it takes long, another process
+// holds the single-process lock, so fail fast with a useful message instead.
+const DEFAULT_EMBEDDED_CONNECT_TIMEOUT_MS = 10_000;
+/** Zero-config default: embedded SurrealKV inside the target repo, no server. */
+export const DEFAULT_EMBEDDED_URL = "surrealkv://.dfc/dev-memory";
 const DEFAULT_QUERY_TIMEOUT_MS = 120_000;
 const DEFAULT_CONNECT_ATTEMPTS = 3;
 
@@ -113,11 +118,19 @@ function absolutizeEmbeddedUrl(url: string, repoRoot: string): string {
   return `${scheme}${resolve(repoRoot, path)}`;
 }
 
+/** Filesystem data directory of an embedded URL (surrealkv://, rocksdb://), or null. */
+export function embeddedDataDir(url: string): string | null {
+  const m = /^(?:surrealkv(?:\+versioned)?|rocksdb):\/\/(.+)$/.exec(url.trim());
+  return m ? m[1] : null;
+}
+
 export function loadConfig(options: ConfigOptions = {}): DfcConfig {
   const fileEnv = dfcFileEnv(options.repoRoot);
   const get = (k: string): string => (process.env[k] ?? fileEnv[k] ?? "").trim();
 
-  const rawUrl = get("DFC_SURREAL_URL");
+  // Zero-config default: a fresh clone with no .dfc/surreal.env gets a local
+  // embedded database under the target repo — no server, no credentials.
+  const rawUrl = get("DFC_SURREAL_URL") || DEFAULT_EMBEDDED_URL;
   return {
     url: isEmbeddedUrl(rawUrl)
       ? absolutizeEmbeddedUrl(rawUrl, resolveRepoRoot(options.repoRoot))
@@ -190,19 +203,26 @@ export function assertUsableConfig(cfg: DfcConfig): void {
 /** Connect, select namespace/database, authenticate. Caller closes the handle.
  *  Embedded URLs (surrealkv://, rocksdb://, mem://) load the @surrealdb/node
  *  engine lazily and skip authentication — the database lives inside the repo. */
+/** Construct an (unconnected) client with the embedded Node engines loaded when
+ *  the URL needs them. Callers that manage their own connect flow (migrate) use
+ *  this instead of `new Surreal()` so embedded URLs work everywhere. */
+export async function createClient(cfg: DfcConfig): Promise<Surreal> {
+  if (!isEmbeddedUrl(cfg.url)) return new Surreal();
+  const { createNodeEngines } = await import("@surrealdb/node");
+  return new Surreal({ engines: createNodeEngines() });
+}
+
 export async function connect(cfg: DfcConfig): Promise<Surreal> {
-  const timeoutMs = numberEnv("DFC_SURREAL_CONNECT_TIMEOUT_MS", DEFAULT_CONNECT_TIMEOUT_MS);
-  const attempts = numberEnv("DFC_SURREAL_CONNECT_ATTEMPTS", DEFAULT_CONNECT_ATTEMPTS);
   const embedded = isEmbeddedUrl(cfg.url);
-  let engines: ConstructorParameters<typeof Surreal>[0] | undefined;
-  if (embedded) {
-    const { createNodeEngines } = await import("@surrealdb/node");
-    engines = { engines: createNodeEngines() };
-  }
+  const timeoutMs = numberEnv(
+    "DFC_SURREAL_CONNECT_TIMEOUT_MS",
+    embedded ? DEFAULT_EMBEDDED_CONNECT_TIMEOUT_MS : DEFAULT_CONNECT_TIMEOUT_MS,
+  );
+  const attempts = numberEnv("DFC_SURREAL_CONNECT_ATTEMPTS", DEFAULT_CONNECT_ATTEMPTS);
   let lastError: unknown;
 
   for (let attempt = 1; attempt <= attempts; attempt++) {
-    const db = new Surreal(engines);
+    const db = await createClient(cfg);
     try {
       await withTimeout("SurrealDB connect", db.connect(cfg.url), timeoutMs);
       if (!embedded) await withTimeout("SurrealDB signin", authenticate(db, cfg), timeoutMs);
@@ -219,6 +239,16 @@ export async function connect(cfg: DfcConfig): Promise<Surreal> {
     }
   }
 
+  const message = lastError instanceof Error ? lastError.message : String(lastError);
+  if (embedded && /timed out/.test(message)) {
+    throw new Error(
+      `Embedded SurrealDB connect timed out (${cfg.url}). SurrealKV allows only ONE ` +
+        `process at a time — another dfc command (or the dashboard) probably holds the ` +
+        `lock (LOCK file in the data directory). Wait for it to finish or kill it; note ` +
+        `a killed process can leave the database locked for a short while. ` +
+        `Timeout is overridable via DFC_SURREAL_CONNECT_TIMEOUT_MS (current: ${timeoutMs}ms).`,
+    );
+  }
   throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 

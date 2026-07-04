@@ -3,11 +3,12 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { Surreal } from "surrealdb";
 import { parseArgs, repoRootFromArgs } from "../src/memory/cli.js";
 import {
   assertUsableConfig,
   authenticate,
+  createClient,
+  isEmbeddedUrl,
   loadConfig,
   queryResults,
   REPO_ROOT,
@@ -17,6 +18,7 @@ const MIGRATIONS = [
   "schema/0001_core.surql",
   "schema/0002_indexes.surql",
   "schema/0003_documents_graph_vectors.surql",
+  "schema/0004_state_memory_kinds.surql",
 ];
 
 function ident(name: string, label: string): string {
@@ -32,12 +34,13 @@ async function main(): Promise<void> {
   const cfg = loadConfig({ repoRoot });
   assertUsableConfig(cfg);
 
-  const db = new Surreal();
+  const embedded = isEmbeddedUrl(cfg.url);
+  const db = await createClient(cfg);
   await db.connect(cfg.url);
   try {
-    await authenticate(db, cfg);
+    if (!embedded) await authenticate(db, cfg);
 
-    if (cfg.authScope === "root") {
+    if (embedded || cfg.authScope === "root") {
       const ns = ident(cfg.namespace, "DFC_SURREAL_NS");
       const database = ident(cfg.database, "DFC_SURREAL_DB");
       await queryResults(db, `DEFINE NAMESPACE IF NOT EXISTS ${ns}`);
@@ -65,6 +68,7 @@ async function main(): Promise<void> {
 
 try {
   await main();
+  process.exit(0);
 } catch (err) {
   console.error(err);
   process.exit(1);

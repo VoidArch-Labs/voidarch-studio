@@ -11,6 +11,11 @@ const COUNT_TABLES = {
   "Doc chunks": "doc_chunk",
   "Decision records": "decision",
   "Evidence records": "evidence_item",
+  "Task records": "task",
+  "Blocker records": "blocker",
+  "Lesson records": "lesson",
+  "Snippet records": "snippet",
+  "Repo facts": "repo_fact",
   "Context packs": "context_pack",
   "Agent runs": "agent_run",
   "Tool events": "tool_event",
@@ -61,6 +66,7 @@ async function main(): Promise<void> {
 
 try {
   await main();
+  process.exit(0);
 } catch (err) {
   console.error(err);
   process.exit(1);

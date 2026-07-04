@@ -10,6 +10,11 @@
     "dfc:db:migrate": "tsx scripts/dfc-db-migrate.ts",
     "dfc:ingest": "tsx scripts/dfc-ingest-repo.ts",
     "dfc:remember": "tsx scripts/dfc-remember.ts",
+    "dfc:memory": "tsx scripts/dfc-memory.ts",
+    "dfc:task": "tsx scripts/dfc-task.ts",
+    "dfc:blocker": "tsx scripts/dfc-blocker.ts",
+    "dfc:metrics": "tsx scripts/dfc-metrics.ts",
+    "dfc:sync": "tsx scripts/dfc-sync.ts",
     "dfc:context": "tsx scripts/dfc-context-pack.ts",
     "dfc:status": "tsx scripts/dfc-status.ts",
     "dfc:import-runs": "tsx scripts/dfc-import-runs.ts",
@@ -31,6 +36,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@surrealdb/node": "^3.0.3",
     "surrealdb": "^2.0.4"
   },
   "devDependencies": {

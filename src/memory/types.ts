@@ -1,6 +1,6 @@
 // Shared types for the dev-flow-control SurrealDB dev-memory slice.
 
-export type MemoryKind = "decision" | "evidence";
+export type MemoryKind = "decision" | "evidence" | "lesson" | "snippet" | "repo_fact";
 export type SourceAgent = "manual" | "codex" | "claude" | "grok-build";
 export type Phase = "discuss" | "plan" | "execute" | "verify" | "ship";
 
@@ -28,7 +28,7 @@ export interface FileRecord {
   ingested_at: string; // ISO-8601
 }
 
-/** A remembered decision or evidence item. */
+/** A remembered decision/evidence/lesson/snippet/repo-fact item. */
 export interface MemoryRecord {
   repo_id: string;
   source_agent: SourceAgent;
@@ -36,8 +36,39 @@ export interface MemoryRecord {
   summary: string;
   tags: string[];
   task_goal?: string;
+  language?: string; // snippet kind only
+  source_path?: string; // snippet kind only
   created_at: string; // ISO-8601
   updated_at: string; // ISO-8601
+}
+
+export type TaskStatus = "open" | "in_progress" | "blocked" | "done";
+
+/** Task state row (`task` table; legacy context-pack audit rows carry no status). */
+export interface TaskStateRecord {
+  repo_id: string;
+  source_agent: SourceAgent;
+  goal: string;
+  status: TaskStatus;
+  tags: string[];
+  created_at: string; // ISO-8601
+  updated_at: string; // ISO-8601
+  done_at?: string; // ISO-8601
+}
+
+/** Blocker state row (`blocker` table, schema 0004). */
+export interface BlockerRecord {
+  repo_id: string;
+  source_agent: SourceAgent;
+  text: string;
+  summary: string;
+  tags: string[];
+  status: "open" | "resolved";
+  task_goal?: string;
+  session_id?: string;
+  created_at: string; // ISO-8601
+  updated_at: string; // ISO-8601
+  resolved_at?: string; // ISO-8601
 }
 
 // ---- Context-pack output shape (stable JSON contract for /dfc-context) ----
@@ -56,6 +87,29 @@ export interface ContextMemoryEntry {
   source_agent: SourceAgent | string;
   created_at: string;
   score: number;
+}
+
+/** Snippet memory entry: memory shape + code excerpt and optional provenance. */
+export interface ContextSnippetEntry extends ContextMemoryEntry {
+  excerpt: string;
+  language?: string;
+  source_path?: string;
+}
+
+/** Open blocker surfaced as live state (not a similarity hit). */
+export interface ContextBlockerEntry {
+  summary: string;
+  status: string;
+  created_at: string;
+  task_goal?: string;
+  session_id?: string;
+}
+
+/** Non-done task surfaced as live state. */
+export interface ContextTaskStateEntry {
+  goal: string;
+  status: string;
+  created_at: string;
 }
 
 export interface ContextAgentRunEntry {
@@ -248,6 +302,13 @@ export interface ContextPack {
   memory_context: {
     decisions: ContextMemoryEntry[];
     evidence: ContextMemoryEntry[];
+    lessons: ContextMemoryEntry[];
+    repo_facts: ContextMemoryEntry[];
+    snippets: ContextSnippetEntry[];
+  };
+  state: {
+    open_blockers: ContextBlockerEntry[];
+    open_tasks: ContextTaskStateEntry[];
   };
   verification: { last_failures: string[] };
   workflow: { approval_required: string[]; approval_available: string[] };

@@ -2,14 +2,29 @@
 // read query, and print the connection status. Human-readable output.
 
 import { parseArgs, repoRootFromArgs } from "../src/memory/cli.js";
-import { assertUsableConfig, connect, loadConfig, queryResult } from "../src/memory/surreal.js";
+import {
+  assertUsableConfig,
+  connect,
+  embeddedDataDir,
+  isEmbeddedUrl,
+  loadConfig,
+  queryResult,
+} from "../src/memory/surreal.js";
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const repoRoot = repoRootFromArgs(args);
   const cfg = loadConfig({ repoRoot });
 
+  const embedded = isEmbeddedUrl(cfg.url);
   console.log("DFC SurrealDB dev memory :: connection check");
+  console.log(
+    `  Engine:    ${
+      embedded
+        ? `embedded (SurrealKV, single-process) — data dir ${embeddedDataDir(cfg.url) ?? "(in-memory)"}`
+        : `hosted — ${cfg.url || "(unset)"}`
+    }`,
+  );
   console.log(`  URL:       ${cfg.url || "(unset)"}`);
   console.log(`  Namespace: ${cfg.namespace}`);
   console.log(`  Database:  ${cfg.database}`);
@@ -40,6 +55,7 @@ async function main(): Promise<void> {
 
 try {
   await main();
+  process.exit(0);
 } catch (err) {
   console.error(err);
   process.exit(1);

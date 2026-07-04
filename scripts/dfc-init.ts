@@ -8,11 +8,12 @@
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { parseArgs, repoRootFromArgs } from "../src/memory/cli.js";
-import { REPO_ROOT, parseEnvFile } from "../src/memory/surreal.js";
+import { REPO_ROOT, isEmbeddedUrl, parseEnvFile } from "../src/memory/surreal.js";
 
 const GITIGNORE_LINES = [
   ".dfc/*.env",
   "!.dfc/*.example.env",
+  ".dfc/dev-memory/",
   "graphify-out/",
   ".agent-runs/",
 ];
@@ -72,10 +73,16 @@ function main(): void {
   // 2. Optionally seed real connection values from the plugin's own surreal.env
   //    (same instance, per-repo database). Explicit opt-in only.
   if (args["copy-credentials"] === "true") {
-    const pluginEnv = parseEnvFile(join(REPO_ROOT, ".dfc", "surreal.env"));
+    // "Copy credentials" means the plugin's HOSTED instance. The plugin's own
+    // surreal.env may point at its local embedded DB, so prefer the first env
+    // file that actually carries hosted (non-embedded) connection values.
+    let pluginEnv = parseEnvFile(join(REPO_ROOT, ".dfc", "surreal.env"));
+    if (!pluginEnv.DFC_SURREAL_URL || isEmbeddedUrl(pluginEnv.DFC_SURREAL_URL)) {
+      pluginEnv = parseEnvFile(join(REPO_ROOT, ".dfc", "surreal.hosted.env"));
+    }
     const surrealEnvOut = join(targetDfc, "surreal.env");
-    if (!pluginEnv.DFC_SURREAL_URL) {
-      skipped.push(".dfc/surreal.env (plugin has no credentials to copy)");
+    if (!pluginEnv.DFC_SURREAL_URL || isEmbeddedUrl(pluginEnv.DFC_SURREAL_URL)) {
+      skipped.push(".dfc/surreal.env (plugin has no hosted credentials to copy)");
     } else if (existsSync(surrealEnvOut) && !force) {
       skipped.push(".dfc/surreal.env (exists)");
     } else {
@@ -144,9 +151,9 @@ function main(): void {
   for (const d of done) console.log(`  + ${d}`);
   for (const s of skipped) console.log(`  = ${s}`);
   console.log(`
-Next steps:
-  1. Credentials: create ${join(targetRoot, ".dfc/surreal.env")} from the example
-     (or rerun with --copy-credentials to reuse the plugin's instance with a per-repo DB).
+Next steps (default = embedded SurrealKV at ${join(targetRoot, ".dfc/dev-memory")} — no credentials needed):
+  1. Hosted instead? Create ${join(targetRoot, ".dfc/surreal.env")} from the example's wss:// block
+     (or rerun with --copy-credentials to reuse the plugin's hosted instance with a per-repo DB).
   2. Verify:   pnpm --dir ${REPO_ROOT} dfc:db:check   --repo-root ${targetRoot}
   3. Migrate:  pnpm --dir ${REPO_ROOT} dfc:db:migrate --repo-root ${targetRoot}
   4. Ingest:   pnpm --dir ${REPO_ROOT} dfc:ingest     --repo-root ${targetRoot} --limit 50

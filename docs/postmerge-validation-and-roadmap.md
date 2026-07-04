@@ -182,3 +182,11 @@ corrected to `wss://host`; once fixed, the host resolved and `/health` returned 
   schema remains dimension-agnostic; current retrieval uses deterministic JS cosine).
 - Doc-level semantic graph re-extraction (`/graphify --update` or set `GEMINI_API_KEY`).
 - Efficiency benchmark before any token-savings claim (unchanged from prior spec).
+
+## 5. Lessons / state after the embedded-memory round
+
+- Embedded SurrealKV is **single-process**: a `LOCK` file in `.dfc/dev-memory/` means two concurrent `dfc` commands deadlock the second one; run commands sequentially, and expect a brief stale lock after a killed process.
+- Every `dfc` script must call `process.exit()` explicitly — the embedded engine keeps handles open and the process otherwise hangs after finishing its work.
+- Memory kinds are now five: `decision`, `evidence`, `lesson`, `snippet`, `repo_fact` (migration `schema/0004_state_memory_kinds.surql`).
+- Task/blocker state (`dfc:task`, `dfc:blocker`) is live and surfaces in context packs under `state.open_tasks` / `state.open_blockers`.
+- `dfc:metrics` (summary, `--json`) and `dfc:sync` (`--to`/`--from <url>`, one-way copy of repo-scoped tables between embedded and hosted, `--dry-run`) round out the CLI; the dashboard now shows tasks, blockers, lessons, snippets, repo facts, and metrics.

@@ -24,3 +24,6 @@ dist/
 # OS / editor cruft
 .DS_Store
 *.swp
+
+# Embedded SurrealKV data (local dev-memory database)
+.dfc/dev-memory/
