@@ -9,32 +9,16 @@
 // update .`). If it is absent or stale vs HEAD, this reports it instead of failing.
 
 import { normalizeSourceAgent } from "../src/memory/agents.js";
+import { parseArgs, repoRootFromArgs } from "../src/memory/cli.js";
 import { buildGraphPlan, currentGitCommit, findGraphFile, importGraph, loadGraph } from "../src/memory/graph.js";
-import { REPO_ROOT, loadConfig, withDb } from "../src/memory/surreal.js";
-
-function parseArgs(argv: string[]): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    if (a && a.startsWith("--")) {
-      const key = a.slice(2);
-      const next = argv[i + 1];
-      if (next === undefined || next.startsWith("--")) out[key] = "true";
-      else {
-        out[key] = next;
-        i++;
-      }
-    }
-  }
-  return out;
-}
+import { loadConfig, withDb } from "../src/memory/surreal.js";
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const sourceAgent = normalizeSourceAgent(args.agent);
   const dryRun = args["dry-run"] === "true";
   const asJson = args.json === "true";
-  const root = process.env.CLAUDE_PROJECT_DIR || REPO_ROOT;
+  const root = repoRootFromArgs(args);
 
   const file = findGraphFile(root);
   if (!file) {
@@ -43,7 +27,7 @@ async function main(): Promise<void> {
     process.exit(dryRun ? 0 : 1);
   }
 
-  const repoId = loadConfig().repoId;
+  const repoId = loadConfig({ repoRoot: root }).repoId;
   const current = currentGitCommit(root);
   const plan = buildGraphPlan(loadGraph(file), repoId, sourceAgent, current, new Date().toISOString());
 
@@ -63,7 +47,7 @@ async function main(): Promise<void> {
 
   if (dryRun) return;
 
-  const result = await withDb(async (db) => importGraph(db, plan));
+  const result = await withDb(async (db) => importGraph(db, plan), { repoRoot: root });
   console.log("  --- written to SurrealDB ---");
   console.log(`  graph_node:      ${result.nodes}`);
   console.log(`  graph_edge:      ${result.edges}`);
@@ -71,7 +55,9 @@ async function main(): Promise<void> {
   console.log(`  snapshot:        ${result.snapshotId} (replaced prior repo graph rows)`);
 }
 
-main().catch((err) => {
+try {
+  await main();
+} catch (err) {
   console.error((err as Error)?.message ?? String(err));
   process.exit(1);
-});
+}

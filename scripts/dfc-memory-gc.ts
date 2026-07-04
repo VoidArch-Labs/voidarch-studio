@@ -8,23 +8,16 @@
 // with no SurrealDB credentials it reports "not configured" and exits 0.
 
 import type { Surreal } from "surrealdb";
+import { parseArgs, repoRootFromArgs } from "../src/memory/cli.js";
 import { assertUsableConfig, connect, loadConfig } from "../src/memory/surreal.js";
 import { findGcCandidates, runGc } from "../src/memory/vectors.js";
-
-function parseArgs(argv: string[]): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    if (a && a.startsWith("--")) out[a.slice(2)] = "true";
-  }
-  return out;
-}
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const dryRun = args["dry-run"] === "true";
   const asJson = args.json === "true";
-  const cfg = loadConfig();
+  const repoRoot = repoRootFromArgs(args);
+  const cfg = loadConfig({ repoRoot });
 
   console.log(`dfc:memory:gc ${dryRun ? "(DRY RUN — no deletes)" : ""}`.trim());
 
@@ -61,7 +54,9 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((err) => {
+try {
+  await main();
+} catch (err) {
   console.error((err as Error)?.message ?? String(err));
   process.exit(1);
-});
+}

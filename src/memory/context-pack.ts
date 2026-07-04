@@ -242,6 +242,7 @@ export async function buildContextPack(
   db: Surreal,
   repoId: string,
   task: string,
+  opts: { repoRoot?: string } = {},
 ): Promise<ContextPack> {
   const goal = task.trim();
   const phase: Phase = inferPhase(goal);
@@ -332,7 +333,7 @@ export async function buildContextPack(
   // (it must embed the query). No provider → no vector context, no error.
   let vectorChunks: ContextVectorChunkEntry[] = [];
   try {
-    const embedCfg = resolveEmbedConfig();
+    const embedCfg = resolveEmbedConfig({ repoRoot: opts.repoRoot });
     if (embedCfg.available) vectorChunks = await queryVectors(db, embedCfg, repoId, goal, 6);
   } catch {
     vectorChunks = [];

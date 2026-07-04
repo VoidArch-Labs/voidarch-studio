@@ -9,9 +9,28 @@ import type { QueryResponse } from "surrealdb";
 import type { DfcConfig } from "./types.js";
 
 const moduleDir = dirname(fileURLToPath(import.meta.url));
+const DEFAULT_CONNECT_TIMEOUT_MS = 60_000;
+const DEFAULT_QUERY_TIMEOUT_MS = 120_000;
+const DEFAULT_CONNECT_ATTEMPTS = 3;
 
 /** Repo root = two levels up from src/memory/ (resolved from this file, not cwd). */
 export const REPO_ROOT = resolve(moduleDir, "..", "..");
+
+export interface ConfigOptions {
+  repoRoot?: string;
+}
+
+/** Target repo root precedence for installed-plugin mode. */
+export function resolveRepoRoot(explicit?: string): string {
+  const raw =
+    explicit ||
+    process.env.DFC_TARGET_REPO_ROOT ||
+    process.env.CLAUDE_PROJECT_DIR ||
+    process.env.PWD ||
+    process.cwd?.() ||
+    REPO_ROOT;
+  return resolve(raw);
+}
 
 /** Minimal KEY=VALUE .env parser (no dependency). Ignores blanks and # comments. */
 function parseEnvFile(path: string): Record<string, string> {
@@ -41,12 +60,37 @@ function parseEnvFile(path: string): Record<string, string> {
  *   2. .dfc/surreal.env       (real values, gitignored)
  *   3. .dfc/surreal.example.env (committed template / defaults)
  */
-export function loadConfig(): DfcConfig {
-  const dfcDir = join(REPO_ROOT, ".dfc");
-  const fileEnv = {
-    ...parseEnvFile(join(dfcDir, "surreal.example.env")),
-    ...parseEnvFile(join(dfcDir, "surreal.env")),
+/**
+ * Merged KEY=VALUE view of the gitignored .dfc env files, lowest→highest precedence:
+ * surreal.example.env (template) < surreal.env (real connection) < embed.env (embedding
+ * provider + key). Shared by the SurrealDB config and the embedding-provider config so
+ * secrets live only in gitignored files and never need to be passed on the command line.
+ */
+export function dfcFileEnv(repoRoot?: string): Record<string, string> {
+  const pluginDfcDir = join(REPO_ROOT, ".dfc");
+  const targetRoot = resolveRepoRoot(repoRoot);
+  const targetDfcDir = join(targetRoot, ".dfc");
+  const pluginEnv = {
+    ...parseEnvFile(join(pluginDfcDir, "surreal.example.env")),
+    ...parseEnvFile(join(pluginDfcDir, "surreal.env")),
+    ...parseEnvFile(join(pluginDfcDir, "embed.env")),
   };
+  const targetEnv =
+    targetRoot === REPO_ROOT
+      ? {}
+      : {
+          ...parseEnvFile(join(targetDfcDir, "surreal.example.env")),
+          ...parseEnvFile(join(targetDfcDir, "surreal.env")),
+          ...parseEnvFile(join(targetDfcDir, "embed.env")),
+        };
+  return {
+    ...pluginEnv,
+    ...targetEnv,
+  };
+}
+
+export function loadConfig(options: ConfigOptions = {}): DfcConfig {
+  const fileEnv = dfcFileEnv(options.repoRoot);
   const get = (k: string): string => (process.env[k] ?? fileEnv[k] ?? "").trim();
 
   return {
@@ -66,6 +110,32 @@ function normalizeAuthScope(value: string): DfcConfig["authScope"] {
   const scope = value.trim().toLowerCase();
   if (scope === "root" || scope === "namespace" || scope === "database") return scope;
   throw new Error("DFC_SURREAL_AUTH_SCOPE must be root, namespace, or database");
+}
+
+function numberEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed < 1) return fallback;
+  return parsed;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
+}
+
+async function withTimeout<T>(label: string, promise: Promise<T>, timeoutMs: number): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 /** Throw a clear error if required fields are missing or still placeholders. */
@@ -90,11 +160,29 @@ export function assertUsableConfig(cfg: DfcConfig): void {
 
 /** Connect, select namespace/database, authenticate. Caller closes the handle. */
 export async function connect(cfg: DfcConfig): Promise<Surreal> {
-  const db = new Surreal();
-  await db.connect(cfg.url);
-  await authenticate(db, cfg);
-  await db.use({ namespace: cfg.namespace, database: cfg.database });
-  return db;
+  const timeoutMs = numberEnv("DFC_SURREAL_CONNECT_TIMEOUT_MS", DEFAULT_CONNECT_TIMEOUT_MS);
+  const attempts = numberEnv("DFC_SURREAL_CONNECT_ATTEMPTS", DEFAULT_CONNECT_ATTEMPTS);
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    const db = new Surreal();
+    try {
+      await withTimeout("SurrealDB connect", db.connect(cfg.url), timeoutMs);
+      await withTimeout("SurrealDB signin", authenticate(db, cfg), timeoutMs);
+      await withTimeout("SurrealDB use", db.use({ namespace: cfg.namespace, database: cfg.database }), timeoutMs);
+      return db;
+    } catch (err) {
+      lastError = err;
+      try {
+        await db.close();
+      } catch {
+        /* ignore failed cleanup between connection attempts */
+      }
+      if (attempt < attempts) await sleep(1_000 * attempt);
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
 export async function authenticate(db: Surreal, cfg: DfcConfig): Promise<void> {
@@ -140,7 +228,12 @@ export async function queryResults<R extends unknown[] = unknown[]>(
   query: string,
   bindings?: Record<string, unknown>,
 ): Promise<R> {
-  const responses = (await db.query<R>(query, bindings).responses()) as QueryResponse<unknown>[];
+  const timeoutMs = numberEnv("DFC_SURREAL_QUERY_TIMEOUT_MS", DEFAULT_QUERY_TIMEOUT_MS);
+  const responses = (await withTimeout(
+    "SurrealDB query",
+    db.query<R>(query, bindings).responses(),
+    timeoutMs,
+  )) as QueryResponse<unknown>[];
   return responses.map((response, index) => {
     if (!response.success) throw new Error(queryErrorMessage(response, index));
     return response.result;
@@ -162,8 +255,9 @@ export async function queryResult<T>(
  */
 export async function withDb<T>(
   fn: (db: Surreal, cfg: DfcConfig) => Promise<T>,
+  options: ConfigOptions = {},
 ): Promise<T> {
-  const cfg = loadConfig();
+  const cfg = loadConfig(options);
   assertUsableConfig(cfg);
   const db = await connect(cfg);
   try {

@@ -5,24 +5,8 @@
 //   pnpm dfc:graph:status --json      # machine output
 
 import { graphStatusDb, graphStatusLocal, type GraphStatus } from "../src/memory/graph.js";
-import { REPO_ROOT, loadConfig, withDb } from "../src/memory/surreal.js";
-
-function parseArgs(argv: string[]): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    if (a && a.startsWith("--")) {
-      const key = a.slice(2);
-      const next = argv[i + 1];
-      if (next === undefined || next.startsWith("--")) out[key] = "true";
-      else {
-        out[key] = next;
-        i++;
-      }
-    }
-  }
-  return out;
-}
+import { parseArgs, repoRootFromArgs } from "../src/memory/cli.js";
+import { loadConfig, withDb } from "../src/memory/surreal.js";
 
 function printStatus(s: GraphStatus, dryRun: boolean): void {
   console.log(`dfc:graph:status ${dryRun ? "(DRY RUN — local graph.json)" : "(SurrealDB snapshot)"}`);
@@ -46,11 +30,12 @@ async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const dryRun = args["dry-run"] === "true";
   const asJson = args.json === "true";
-  const root = process.env.CLAUDE_PROJECT_DIR || REPO_ROOT;
+  const root = repoRootFromArgs(args);
+  const cfg = loadConfig({ repoRoot: root });
 
   const status = dryRun
     ? graphStatusLocal(root)
-    : await withDb(async (db) => graphStatusDb(db, loadConfig().repoId, root));
+    : await withDb(async (db) => graphStatusDb(db, cfg.repoId, root), { repoRoot: root });
 
   if (asJson) {
     process.stdout.write(`${JSON.stringify(status)}\n`);
@@ -59,7 +44,9 @@ async function main(): Promise<void> {
   printStatus(status, dryRun);
 }
 
-main().catch((err) => {
+try {
+  await main();
+} catch (err) {
   console.error((err as Error)?.message ?? String(err));
   process.exit(1);
-});
+}

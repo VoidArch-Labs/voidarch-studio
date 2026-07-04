@@ -10,24 +10,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { normalizeSourceAgent } from "../src/memory/agents.js";
-import { REPO_ROOT } from "../src/memory/surreal.js";
-
-function parseArgs(argv: string[]): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    if (a && a.startsWith("--")) {
-      const key = a.slice(2);
-      const next = argv[i + 1];
-      if (next === undefined || next.startsWith("--")) out[key] = "true";
-      else {
-        out[key] = next;
-        i++;
-      }
-    }
-  }
-  return out;
-}
+import { parseArgs, repoRootFromArgs } from "../src/memory/cli.js";
 
 function main(): void {
   const args = parseArgs(process.argv.slice(2));
@@ -35,7 +18,7 @@ function main(): void {
   const session = (args.session || "manual").trim();
   const now = new Date().toISOString();
 
-  const root = process.env.CLAUDE_PROJECT_DIR || REPO_ROOT;
+  const root = repoRootFromArgs(args);
   const path = join(root, ".agent-runs", "sessions", session, "run.json");
 
   // Merge with any existing run.json so repeated calls accrete rather than clobber.

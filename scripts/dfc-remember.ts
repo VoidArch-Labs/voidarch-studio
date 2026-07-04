@@ -4,21 +4,10 @@
 
 import { Table } from "surrealdb";
 import { normalizeSourceAgent } from "../src/memory/agents.js";
+import { parseArgs, repoRootFromArgs } from "../src/memory/cli.js";
 import { withDb } from "../src/memory/surreal.js";
 import { detectRiskTerms, tokenize } from "../src/memory/scoring.js";
 import type { MemoryRecord } from "../src/memory/types.js";
-
-function parseArgs(argv: string[]): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    if (a && a.startsWith("--")) {
-      out[a.slice(2)] = argv[i + 1] ?? "";
-      i++;
-    }
-  }
-  return out;
-}
 
 /** First sentence, capped at 140 chars. */
 function summarize(text: string): string {
@@ -33,6 +22,7 @@ async function main(): Promise<void> {
   const text = (args.text || "").trim();
   const sourceAgent = normalizeSourceAgent(args.agent);
   const taskGoal = (args.task || args.goal || "").trim();
+  const repoRoot = repoRootFromArgs(args);
 
   if (kind !== "decision" && kind !== "evidence") {
     console.error('--kind must be "decision" or "evidence"');
@@ -66,10 +56,12 @@ async function main(): Promise<void> {
       : [created as { id?: unknown }];
     const id = rows[0]?.id;
     console.log(`remembered ${kind} from ${sourceAgent}: ${summarize(text)}  [${String(id ?? "(created)")}]`);
-  });
+  }, { repoRoot });
 }
 
-main().catch((err) => {
+try {
+  await main();
+} catch (err) {
   console.error(err);
   process.exit(1);
-});
+}

@@ -4,6 +4,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Surreal } from "surrealdb";
+import { parseArgs, repoRootFromArgs } from "../src/memory/cli.js";
 import {
   assertUsableConfig,
   authenticate,
@@ -26,7 +27,9 @@ function ident(name: string, label: string): string {
 }
 
 async function main(): Promise<void> {
-  const cfg = loadConfig();
+  const args = parseArgs(process.argv.slice(2));
+  const repoRoot = repoRootFromArgs(args);
+  const cfg = loadConfig({ repoRoot });
   assertUsableConfig(cfg);
 
   const db = new Surreal();
@@ -60,7 +63,9 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((err) => {
+try {
+  await main();
+} catch (err) {
   console.error(err);
   process.exit(1);
-});
+}

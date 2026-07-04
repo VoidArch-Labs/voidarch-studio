@@ -1,5 +1,6 @@
 // dfc:status - connect and report per-table row counts. Human-readable.
 
+import { parseArgs, repoRootFromArgs } from "../src/memory/cli.js";
 import { queryResult, withDb } from "../src/memory/surreal.js";
 import type { Surreal } from "surrealdb";
 
@@ -30,6 +31,8 @@ async function countTable(db: Surreal, table: string): Promise<number> {
 }
 
 async function main(): Promise<void> {
+  const args = parseArgs(process.argv.slice(2));
+  const repoRoot = repoRootFromArgs(args);
   await withDb(async (db, cfg) => {
     console.log("DFC SurrealDB dev memory");
     console.log(`URL: ${cfg.url}`);
@@ -53,10 +56,12 @@ async function main(): Promise<void> {
     } catch (err) {
       console.log(`Last ingest: ERR (${(err as Error).message})`);
     }
-  });
+  }, { repoRoot });
 }
 
-main().catch((err) => {
+try {
+  await main();
+} catch (err) {
   console.error(err);
   process.exit(1);
-});
+}

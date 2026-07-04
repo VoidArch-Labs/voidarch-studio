@@ -9,7 +9,8 @@
 // configured, this is a no-op that explains how to enable a provider.
 
 import { normalizeSourceAgent } from "../src/memory/agents.js";
-import { REPO_ROOT, loadConfig, withDb } from "../src/memory/surreal.js";
+import { parseArgs, repoRootFromArgs } from "../src/memory/cli.js";
+import { loadConfig, withDb } from "../src/memory/surreal.js";
 import {
   embedChunks,
   gatherDbTargets,
@@ -17,30 +18,15 @@ import {
   resolveEmbedConfig,
 } from "../src/memory/vectors.js";
 
-function parseArgs(argv: string[]): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    if (a && a.startsWith("--")) {
-      const key = a.slice(2);
-      const next = argv[i + 1];
-      if (next === undefined || next.startsWith("--")) out[key] = "true";
-      else {
-        out[key] = next;
-        i++;
-      }
-    }
-  }
-  return out;
-}
-
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const dryRun = args["dry-run"] === "true";
   const approve = args.approve === "true";
   const sourceAgent = normalizeSourceAgent(args.agent);
   const limit = args.limit ? Math.max(1, Number.parseInt(args.limit, 10) || 25) : 25;
-  const cfg = resolveEmbedConfig({ approve });
+  const repoRoot = repoRootFromArgs(args);
+  const cfg = resolveEmbedConfig({ approve, repoRoot });
+  const dbCfg = loadConfig({ repoRoot });
 
   console.log(`dfc:embed ${dryRun ? "(DRY RUN — no API calls)" : ""}`.trim());
   console.log(`  provider:   ${cfg.provider}`);
@@ -52,8 +38,8 @@ async function main(): Promise<void> {
 
   if (dryRun) {
     const targets = gatherLocalTargets(
-      process.env.CLAUDE_PROJECT_DIR || REPO_ROOT,
-      loadConfig().repoId,
+      repoRoot,
+      dbCfg.repoId,
       sourceAgent,
       limit,
       new Date().toISOString(),
@@ -69,12 +55,12 @@ async function main(): Promise<void> {
     return;
   }
 
-  const repoId = loadConfig().repoId;
+  const repoId = dbCfg.repoId;
   const result = await withDb(async (db) => {
     const targets = await gatherDbTargets(db, repoId, cfg.modelKey, limit);
     console.log(`  candidates: ${targets.length} new doc chunk(s) (skip-existing by content hash)`);
     return embedChunks(db, cfg, repoId, targets);
-  });
+  }, { repoRoot });
 
   console.log("  --- embedding complete ---");
   console.log(`  embedded:   ${result.embedded}`);
@@ -83,7 +69,9 @@ async function main(): Promise<void> {
   console.log(`  dimension:  ${result.dimension}`);
 }
 
-main().catch((err) => {
+try {
+  await main();
+} catch (err) {
   console.error((err as Error)?.message ?? String(err));
   process.exit(1);
-});
+}

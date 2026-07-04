@@ -15,7 +15,8 @@
 import { Table } from "surrealdb";
 import type { Surreal } from "surrealdb";
 import { normalizeSourceAgent } from "../src/memory/agents.js";
-import { REPO_ROOT, loadConfig, queryResult, withDb } from "../src/memory/surreal.js";
+import { parseArgs as parseCliArgs, repoRootFromArgs } from "../src/memory/cli.js";
+import { loadConfig, queryResult, withDb } from "../src/memory/surreal.js";
 import type { SourceAgent } from "../src/memory/types.js";
 import {
   type AgentRunRow,
@@ -35,30 +36,13 @@ import {
 } from "../src/memory/runs.js";
 
 interface Args {
+  [key: string]: string | undefined;
   agent?: string;
   session?: string;
   limit?: string;
   task?: string;
   "dry-run"?: string;
   json?: string;
-}
-
-function parseArgs(argv: string[]): Args {
-  const out: Record<string, string> = {};
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    if (a && a.startsWith("--")) {
-      const key = a.slice(2);
-      const next = argv[i + 1];
-      if (next === undefined || next.startsWith("--")) {
-        out[key] = "true"; // boolean flag
-      } else {
-        out[key] = next;
-        i++;
-      }
-    }
-  }
-  return out as Args;
 }
 
 interface ImportPlan {
@@ -187,10 +171,11 @@ function printSummary(plan: ImportPlan, dryRun: boolean): void {
 }
 
 async function main(): Promise<void> {
-  const args = parseArgs(process.argv.slice(2));
+  const args = parseCliArgs(process.argv.slice(2)) as Args;
   const sourceAgent = normalizeSourceAgent(args.agent);
   const dryRun = args["dry-run"] === "true";
   const asJson = args.json === "true";
+  const root = repoRootFromArgs(args as Record<string, string>);
   const limit = args.limit ? Number.parseInt(args.limit, 10) : undefined;
   if (limit !== undefined && (!Number.isFinite(limit) || limit <= 0)) {
     console.error("--limit must be a positive integer");
@@ -198,8 +183,7 @@ async function main(): Promise<void> {
   }
 
   // repoId comes from config (no credentials needed to read it).
-  const repoId = loadConfig().repoId;
-  const root = process.env.CLAUDE_PROJECT_DIR || REPO_ROOT;
+  const repoId = loadConfig({ repoRoot: root }).repoId;
   const plan = buildPlan(root, repoId, sourceAgent, {
     session: args.session,
     limit,
@@ -232,7 +216,7 @@ async function main(): Promise<void> {
     const vr = await insertNew(db, "verification_run", "vrun_hash", (r: VerificationRunRow) => r.vrun_hash, repoId, plan.verifications);
     const ap = await insertNew(db, "approval", "approval_hash", (r: ApprovalRow) => r.approval_hash, repoId, plan.approvals);
     return { te, ar, vr, ap };
-  });
+  }, { repoRoot: root });
 
   printSummary(plan, false);
   console.log("  --- written to SurrealDB ---");
@@ -242,7 +226,9 @@ async function main(): Promise<void> {
   console.log(`  approval:         +${result.ap.inserted} new, ${result.ap.skipped} already present`);
 }
 
-main().catch((err) => {
+try {
+  await main();
+} catch (err) {
   console.error(err);
   process.exit(1);
-});
+}

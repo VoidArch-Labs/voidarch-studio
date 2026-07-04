@@ -14,7 +14,7 @@ import { createHash } from "node:crypto";
 import { RecordId, type Surreal } from "surrealdb";
 import { buildDocPlan } from "./docs.js";
 import { cosineSimilarity } from "./scoring.js";
-import { queryResult, queryResults } from "./surreal.js";
+import { dfcFileEnv, queryResult, queryResults } from "./surreal.js";
 import type {
   ContextVectorChunkEntry,
   EmbeddingChunkRecord,
@@ -24,6 +24,12 @@ import type {
 
 function sha256(s: string): string {
   return createHash("sha256").update(s).digest("hex");
+}
+
+/** Read an env var with the same precedence as the SurrealDB config: process.env
+ *  over the gitignored .dfc env files (so OPENAI_API_KEY can live in .dfc/embed.env). */
+function envValue(k: string, repoRoot?: string): string {
+  return (process.env[k] ?? dfcFileEnv(repoRoot)[k] ?? "").trim();
 }
 
 export type EmbedProvider = "none" | "ollama" | "openai";
@@ -37,6 +43,7 @@ export interface EmbedConfig {
   paid: boolean;
   apiKeyPresent: boolean;
   approved: boolean;
+  apiKey?: string;
   available: boolean; // can we embed live right now?
   reason: string;
 }
@@ -48,15 +55,18 @@ function defaultModel(p: EmbedProvider): string {
 }
 
 /** Resolve embedding configuration from env (+ optional --approve). Pure. */
-export function resolveEmbedConfig(opts?: { approve?: boolean }): EmbedConfig {
-  const provider = (process.env.DFC_EMBED_PROVIDER || "none").trim().toLowerCase() as EmbedProvider;
-  const model = (process.env.DFC_EMBED_MODEL || defaultModel(provider)).trim();
-  const dimension = Number.parseInt(process.env.DFC_EMBED_DIMENSION || "0", 10) || 0;
+export function resolveEmbedConfig(opts?: { approve?: boolean; repoRoot?: string }): EmbedConfig {
+  const fileEnv = dfcFileEnv(opts?.repoRoot);
+  const get = (k: string): string => (process.env[k] ?? fileEnv[k] ?? "").trim();
+  const provider = (get("DFC_EMBED_PROVIDER") || "none").toLowerCase() as EmbedProvider;
+  const model = get("DFC_EMBED_MODEL") || defaultModel(provider);
+  const dimension = Number.parseInt(get("DFC_EMBED_DIMENSION") || "0", 10) || 0;
   const paid = provider === "openai";
-  const apiKeyPresent = Boolean(process.env.OPENAI_API_KEY);
-  const approved = opts?.approve === true || process.env.DFC_EMBED_APPROVED === "1";
+  const apiKey = get("OPENAI_API_KEY");
+  const apiKeyPresent = Boolean(apiKey);
+  const approved = opts?.approve === true || get("DFC_EMBED_APPROVED") === "1";
   const host = (
-    process.env.DFC_EMBED_HOST ||
+    get("DFC_EMBED_HOST") ||
     (provider === "ollama" ? "http://localhost:11434" : provider === "openai" ? "https://api.openai.com" : "")
   ).replace(/\/$/, "");
 
@@ -78,7 +88,7 @@ export function resolveEmbedConfig(opts?: { approve?: boolean }): EmbedConfig {
     reason = `unknown provider "${provider}"`;
   }
 
-  return { provider, model, modelKey: `${provider}:${model}`, dimension, host, paid, apiKeyPresent, approved, available, reason };
+  return { provider, model, modelKey: `${provider}:${model}`, dimension, host, paid, apiKeyPresent, apiKey, approved, available, reason };
 }
 
 /** Embed one string. Throws for non-embedding providers or when a gate is closed. */
@@ -96,13 +106,16 @@ export async function embedText(cfg: EmbedConfig, text: string): Promise<number[
   }
   if (cfg.provider === "openai") {
     // Hard gate: never reach the paid API without key + approval.
-    if (!cfg.apiKeyPresent || !cfg.approved) {
+    const key = cfg.apiKey || envValue("OPENAI_API_KEY");
+    if (!key || !cfg.approved) {
       throw new Error("openai embeddings blocked: requires OPENAI_API_KEY and explicit approval");
     }
+    const body: Record<string, unknown> = { model: cfg.model, input: text };
+    if (cfg.dimension > 0) body.dimensions = cfg.dimension; // text-embedding-3-* support reduction
     const res = await fetch(`${cfg.host}/v1/embeddings`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
-      body: JSON.stringify({ model: cfg.model, input: text }),
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+      body: JSON.stringify(body),
     });
     if (!res.ok) throw new Error(`openai embeddings HTTP ${res.status}`);
     const json = (await res.json()) as { data?: Array<{ embedding?: number[] }> };

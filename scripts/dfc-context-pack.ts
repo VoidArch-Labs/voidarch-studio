@@ -6,30 +6,20 @@ import { Table } from "surrealdb";
 import { normalizeSourceAgent } from "../src/memory/agents.js";
 import { buildContextPack } from "../src/memory/context-pack.js";
 import { withDb } from "../src/memory/surreal.js";
-
-function parseArgs(argv: string[]): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    if (a && a.startsWith("--")) {
-      out[a.slice(2)] = argv[i + 1] ?? "";
-      i++;
-    }
-  }
-  return out;
-}
+import { parseArgs, repoRootFromArgs } from "../src/memory/cli.js";
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const task = (args.task || "").trim();
   const sourceAgent = normalizeSourceAgent(args.agent);
+  const repoRoot = repoRootFromArgs(args);
   if (!task) {
     console.error("--task is required");
     process.exit(2);
   }
 
   const pack = await withDb(async (db, cfg) => {
-    const built = await buildContextPack(db, cfg.repoId, task);
+    const built = await buildContextPack(db, cfg.repoId, task, { repoRoot });
     // Best-effort audit trail; never allowed to break the JSON contract.
     try {
       const now = new Date().toISOString();
@@ -53,12 +43,14 @@ async function main(): Promise<void> {
       /* persistence is optional for this slice */
     }
     return built;
-  });
+  }, { repoRoot });
 
   process.stdout.write(`${JSON.stringify(pack)}\n`);
 }
 
-main().catch((err) => {
+try {
+  await main();
+} catch (err) {
   console.error((err as Error)?.message ?? String(err));
   process.exit(1);
-});
+}

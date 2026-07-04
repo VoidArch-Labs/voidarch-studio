@@ -19,7 +19,7 @@ dist/
 
 # Hosted SurrealDB credentials. NEVER commit real values; keep only the template.
 .dfc/*.env
-!.dfc/surreal.example.env
+!.dfc/*.example.env
 
 # OS / editor cruft
 .DS_Store

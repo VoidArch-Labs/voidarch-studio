@@ -14,24 +14,8 @@ import {
   type GraphQueryResult,
 } from "../src/memory/graph.js";
 import { normalizeSourceAgent } from "../src/memory/agents.js";
-import { REPO_ROOT, loadConfig, withDb } from "../src/memory/surreal.js";
-
-function parseArgs(argv: string[]): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    if (a && a.startsWith("--")) {
-      const key = a.slice(2);
-      const next = argv[i + 1];
-      if (next === undefined || next.startsWith("--")) out[key] = "true";
-      else {
-        out[key] = next;
-        i++;
-      }
-    }
-  }
-  return out;
-}
+import { parseArgs, repoRootFromArgs } from "../src/memory/cli.js";
+import { loadConfig, withDb } from "../src/memory/surreal.js";
 
 function printResult(r: GraphQueryResult, dryRun: boolean): void {
   console.log(`dfc:graph:query ${dryRun ? "(DRY RUN — local graph.json)" : "(SurrealDB)"}`);
@@ -61,7 +45,8 @@ async function main(): Promise<void> {
     console.error("--q is required");
     process.exit(2);
   }
-  const root = process.env.CLAUDE_PROJECT_DIR || REPO_ROOT;
+  const root = repoRootFromArgs(args);
+  const cfg = loadConfig({ repoRoot: root });
 
   let result: GraphQueryResult;
   if (dryRun) {
@@ -73,14 +58,14 @@ async function main(): Promise<void> {
     }
     const plan = buildGraphPlan(
       loadGraph(file),
-      loadConfig().repoId,
+      cfg.repoId,
       normalizeSourceAgent(args.agent),
       currentGitCommit(root),
       new Date().toISOString(),
     );
     result = queryGraphLocal(plan, q, limit);
   } else {
-    result = await withDb(async (db) => queryGraph(db, loadConfig().repoId, q, limit));
+    result = await withDb(async (db) => queryGraph(db, cfg.repoId, q, limit), { repoRoot: root });
   }
 
   if (asJson) {
@@ -90,7 +75,9 @@ async function main(): Promise<void> {
   printResult(result, dryRun);
 }
 
-main().catch((err) => {
+try {
+  await main();
+} catch (err) {
   console.error((err as Error)?.message ?? String(err));
   process.exit(1);
-});
+}

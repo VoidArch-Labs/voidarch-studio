@@ -9,25 +9,9 @@
 // agents/*.md, .claude/skills/**/SKILL.md. Unchanged files are skipped on re-ingest.
 
 import { normalizeSourceAgent } from "../src/memory/agents.js";
+import { parseArgs, positiveIntArg, repoRootFromArgs } from "../src/memory/cli.js";
 import { buildDocPlan, ingestDocs } from "../src/memory/docs.js";
-import { REPO_ROOT, loadConfig, withDb } from "../src/memory/surreal.js";
-
-function parseArgs(argv: string[]): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    if (a && a.startsWith("--")) {
-      const key = a.slice(2);
-      const next = argv[i + 1];
-      if (next === undefined || next.startsWith("--")) out[key] = "true";
-      else {
-        out[key] = next;
-        i++;
-      }
-    }
-  }
-  return out;
-}
+import { loadConfig, withDb } from "../src/memory/surreal.js";
 
 function printPlan(stats: ReturnType<typeof buildDocPlan>["stats"], dryRun: boolean): void {
   console.log(`dfc:docs:ingest ${dryRun ? "(DRY RUN — no writes)" : ""}`.trim());
@@ -45,10 +29,11 @@ async function main(): Promise<void> {
   const dryRun = args["dry-run"] === "true";
   const asJson = args.json === "true";
   const now = new Date().toISOString();
+  const repoRoot = repoRootFromArgs(args);
+  const maxDocuments = positiveIntArg(args, "limit");
 
-  const repoId = loadConfig().repoId; // no credentials needed to read repoId
-  const root = process.env.CLAUDE_PROJECT_DIR || REPO_ROOT;
-  const plan = buildDocPlan(root, repoId, sourceAgent, now);
+  const repoId = loadConfig({ repoRoot }).repoId; // no credentials needed to read repoId
+  const plan = buildDocPlan(repoRoot, repoId, sourceAgent, now);
 
   if (asJson) {
     console.log(JSON.stringify({ stats: plan.stats, documents: plan.documents.map((d) => d.document) }, null, 2));
@@ -64,14 +49,16 @@ async function main(): Promise<void> {
     return;
   }
 
-  const result = await withDb(async (db) => ingestDocs(db, plan));
+  const result = await withDb(async (db) => ingestDocs(db, plan, { maxDocuments }), { repoRoot });
   printPlan(plan.stats, false);
   console.log("  --- written to SurrealDB ---");
-  console.log(`  documents written: ${result.documents} (${result.unchanged} unchanged, skipped)`);
+  console.log(`  documents written: ${result.documents} (${result.unchanged} unchanged, ${result.limited} limited)`);
   console.log(`  doc_chunk rows:    ${result.chunks}`);
 }
 
-main().catch((err) => {
+try {
+  await main();
+} catch (err) {
   console.error((err as Error)?.message ?? String(err));
   process.exit(1);
-});
+}

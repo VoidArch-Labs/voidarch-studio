@@ -7,9 +7,10 @@
 // SurrealDB credentials, and never exits non-zero just because the DB is unset.
 
 import type { Surreal } from "surrealdb";
+import { parseArgs, repoRootFromArgs } from "../src/memory/cli.js";
 import { buildDocPlan } from "../src/memory/docs.js";
 import { graphStatusLocal } from "../src/memory/graph.js";
-import { assertUsableConfig, REPO_ROOT, connect, loadConfig } from "../src/memory/surreal.js";
+import { assertUsableConfig, connect, loadConfig } from "../src/memory/surreal.js";
 import {
   countRows,
   findGcCandidates,
@@ -23,21 +24,12 @@ const DB_TABLES = [
   "embedding_model", "embedding_chunk",
 ];
 
-function parseArgs(argv: string[]): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    if (a && a.startsWith("--")) out[a.slice(2)] = "true";
-  }
-  return out;
-}
-
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const asJson = args.json === "true";
-  const root = process.env.CLAUDE_PROJECT_DIR || REPO_ROOT;
-  const cfg = loadConfig();
-  const embed = resolveEmbedConfig();
+  const root = repoRootFromArgs(args);
+  const cfg = loadConfig({ repoRoot: root });
+  const embed = resolveEmbedConfig({ repoRoot: root });
   const docPlan = buildDocPlan(root, cfg.repoId, "manual", new Date().toISOString());
   const graph = graphStatusLocal(root);
 
@@ -118,7 +110,9 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((err) => {
+try {
+  await main();
+} catch (err) {
   // Doctor should not hard-fail; report and exit 0 so it is safe in CI/dry validation.
   console.error(`dfc:memory:doctor warning: ${(err as Error)?.message ?? String(err)}`);
-});
+}

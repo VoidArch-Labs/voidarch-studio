@@ -6,7 +6,7 @@ allowed-tools: Bash
 
 Search the document memory for the given topic and read the ranked chunks as context:
 
-!`pnpm dfc:docs:query --q "$ARGUMENTS"`
+!`pnpm --dir "${CLAUDE_PLUGIN_ROOT:-.}" dfc:docs:query --q "$ARGUMENTS" --repo-root "${CLAUDE_PROJECT_DIR:-$PWD}"`
 
 Notes:
 - Add `--dry-run` to search a fresh in-memory chunking of the repo with no database.

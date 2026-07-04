@@ -1,10 +1,13 @@
 // dfc:db:check - load config, connect, authenticate, select ns/db, run a tiny
 // read query, and print the connection status. Human-readable output.
 
+import { parseArgs, repoRootFromArgs } from "../src/memory/cli.js";
 import { assertUsableConfig, connect, loadConfig, queryResult } from "../src/memory/surreal.js";
 
 async function main(): Promise<void> {
-  const cfg = loadConfig();
+  const args = parseArgs(process.argv.slice(2));
+  const repoRoot = repoRootFromArgs(args);
+  const cfg = loadConfig({ repoRoot });
 
   console.log("DFC SurrealDB dev memory :: connection check");
   console.log(`  URL:       ${cfg.url || "(unset)"}`);
@@ -35,7 +38,9 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((err) => {
+try {
+  await main();
+} catch (err) {
   console.error(err);
   process.exit(1);
-});
+}

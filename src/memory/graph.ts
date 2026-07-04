@@ -80,7 +80,11 @@ export function loadGraph(path: string): GraphifyGraph {
 /** Best-effort current git HEAD (short-circuits to "" when git is unavailable). */
 export function currentGitCommit(root: string): string {
   try {
-    return execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
+    return execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: root,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
   } catch {
     return "";
   }

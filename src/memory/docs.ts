@@ -13,6 +13,7 @@ import { createHash } from "node:crypto";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { RecordId, type Surreal } from "surrealdb";
+import { batchesOf, sizeFromEnv, upsertBatches } from "./batch.js";
 import { queryResult, queryResults } from "./surreal.js";
 import { detectRiskTerms, estimateTokens, scoreDocChunk, tokenize } from "./scoring.js";
 import type {
@@ -25,6 +26,8 @@ import type {
 const MAX_FILE_BYTES = 512 * 1024; // 512 KB per markdown file
 const TARGET_CHARS = 1200; // compact target per chunk (~300 tokens)
 const HARD_CAP_CHARS = 4000; // hard cap: larger sections are sub-split
+const DEFAULT_DOC_CHUNK_BATCH_SIZE = 1;
+const DEFAULT_DOCUMENT_WRITE_BATCH_SIZE = 1;
 
 // Directories never walked for docs. NOTE: `.claude` is intentionally NOT here
 // (skills live there); `.dfc` IS here (never read surreal.env).
@@ -33,6 +36,18 @@ const SKIP_DIRS = new Set<string>([
   "out", "coverage", ".next", ".turbo", ".cache", ".dfc", "vendor",
   ".venv", "venv", "__pycache__", ".idea", ".vscode",
 ]);
+
+const SKIP_REL_DIR_PREFIXES = [
+  ".claude/worktrees",
+  ".codex/worktrees",
+  ".agent-worktrees",
+];
+
+function isSkippedDir(root: string, full: string, name: string): boolean {
+  if (SKIP_DIRS.has(name)) return true;
+  const rel = relative(root, full).replace(/\\/g, "/");
+  return SKIP_REL_DIR_PREFIXES.some((prefix) => rel === prefix || rel.startsWith(`${prefix}/`));
+}
 
 function sha256(s: string): string {
   return createHash("sha256").update(s).digest("hex");
@@ -69,7 +84,7 @@ function walk(root: string, dir: string, acc: DocSource[]): void {
   for (const entry of entries) {
     const full = join(dir, entry.name);
     if (entry.isDirectory()) {
-      if (SKIP_DIRS.has(entry.name)) continue;
+      if (isSkippedDir(root, full, entry.name)) continue;
       walk(root, full, acc);
     } else if (entry.isFile()) {
       const relPath = relative(root, full).replace(/\\/g, "/");
@@ -263,43 +278,82 @@ export interface IngestDocsStats {
   documents: number;
   chunks: number;
   unchanged: number;
+  limited: number;
+}
+
+export interface IngestDocsOptions {
+  maxDocuments?: number;
 }
 
 /** Idempotent ingest: skip unchanged files, else replace their chunks atomically. */
-export async function ingestDocs(db: Surreal, plan: DocPlan): Promise<IngestDocsStats> {
-  let documents = 0;
+export async function ingestDocs(
+  db: Surreal,
+  plan: DocPlan,
+  options: IngestDocsOptions = {},
+): Promise<IngestDocsStats> {
+  const repoId = plan.documents[0]?.document.repo_id;
+  const existing = repoId
+    ? await queryResult<Array<{ source_path?: string; content_hash?: string }>>(
+        db,
+        `SELECT source_path, content_hash FROM document WHERE repo_id = $repo`,
+        { repo: repoId },
+      )
+    : [];
+  const existingByPath = new Map(
+    existing
+      .filter((row) => row.source_path && row.content_hash)
+      .map((row) => [row.source_path as string, row.content_hash as string]),
+  );
+
+  const changed = plan.documents.filter((pd) => {
+    const { source_path, content_hash } = pd.document;
+    return existingByPath.get(source_path) !== content_hash;
+  });
+  const unchanged = plan.documents.length - changed.length;
+  const selected = options.maxDocuments ? changed.slice(0, options.maxDocuments) : changed;
+  const limited = changed.length - selected.length;
+  const chunkBatchSize = sizeFromEnv("DFC_DOC_CHUNK_BATCH_SIZE", DEFAULT_DOC_CHUNK_BATCH_SIZE);
+  const documentBatchSize = sizeFromEnv("DFC_DOCUMENT_WRITE_BATCH_SIZE", DEFAULT_DOCUMENT_WRITE_BATCH_SIZE);
+  const documentWrites: Array<{ id: RecordId; record: DocumentRecord }> = [];
   let chunks = 0;
-  let unchanged = 0;
 
-  for (const pd of plan.documents) {
-    const { repo_id, source_path, content_hash } = pd.document;
-    const prior = await queryResult<Array<{ content_hash?: string }>>(
-      db,
-      `SELECT content_hash FROM document WHERE repo_id = $repo AND source_path = $path LIMIT 1`,
-      { repo: repo_id, path: source_path },
-    );
-    if (prior[0]?.content_hash === content_hash) {
-      unchanged++;
-      continue;
-    }
-
+  for (const pd of selected) {
+    const { repo_id, source_path } = pd.document;
     // Replace this file's chunks wholesale so shrinking files don't leave orphans.
     await queryResults(
       db,
       `DELETE doc_chunk WHERE repo_id = $repo AND source_path = $path`,
       { repo: repo_id, path: source_path },
     );
-    for (const c of pd.chunks) {
-      const key = sha256(`${c.repo_id}:${c.source_path}:${c.chunk_index}`);
-      await db.upsert(new RecordId("doc_chunk", key)).content(c as unknown as Record<string, unknown>);
-      chunks++;
+
+    for (const batch of batchesOf(pd.chunks, chunkBatchSize)) {
+      await upsertBatches(
+        db,
+        batch.map((c) => ({
+          id: new RecordId("doc_chunk", sha256(`${c.repo_id}:${c.source_path}:${c.chunk_index}`)),
+          record: c as unknown as Record<string, unknown>,
+        })),
+        batch.length,
+      );
+      chunks += batch.length;
     }
+
     const dkey = sha256(`${repo_id}:${source_path}`);
-    await db.upsert(new RecordId("document", dkey)).content(pd.document as unknown as Record<string, unknown>);
-    documents++;
+    documentWrites.push({ id: new RecordId("document", dkey), record: pd.document });
   }
 
-  return { documents, chunks, unchanged };
+  for (const batch of batchesOf(documentWrites, documentBatchSize)) {
+    await upsertBatches(
+      db,
+      batch.map(({ id, record }) => ({
+        id,
+        record: record as unknown as Record<string, unknown>,
+      })),
+      batch.length,
+    );
+  }
+
+  return { documents: documentWrites.length, chunks, unchanged, limited };
 }
 
 interface DocChunkRow {
