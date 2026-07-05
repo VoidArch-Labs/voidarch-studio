@@ -30,6 +30,7 @@ import {
   queryResult,
   withDb,
 } from "nox-memory/surreal";
+import { buildContextPack, formatContextPackMarkdown } from "nox-memory/context-pack";
 import { embedChunks, gatherDbTargets, listEmbeddingModels, queryVectors, resolveEmbedConfig } from "nox-memory/vectors";
 import { detectRiskTerms, tokenize } from "nox-memory/scoring";
 import { StringRecordId, Table } from "surrealdb";
@@ -2028,6 +2029,29 @@ async function main(): Promise<void> {
         const result = await setTaskStatus(repoRoot, String(body.id ?? ""), String(body.status ?? ""));
         tasksCache = undefined;
         sendJson(res, result.error ? 400 : 200, result);
+      } else if (url.pathname === "/api/context" && req.method === "GET") {
+        // Studio Context Pack panel: markdown context pack + token estimate (#27).
+        const task = (url.searchParams.get("task") ?? "").trim();
+        if (!task) {
+          sendJson(res, 400, { error: "task query param required" });
+        } else if (!memoryConfigured(repoRoot)) {
+          sendJson(res, 400, { error: "dev-memory not configured" });
+        } else {
+          try {
+            const result = await withDbSerial(async (db, c) => {
+              const pack = await buildContextPack(db, c.repoId, task, { repoRoot });
+              return {
+                task,
+                markdown: formatContextPackMarkdown(pack),
+                token_estimate: pack.token_budget?.estimated_tokens ?? null,
+                target_tokens: pack.token_budget?.target_tokens ?? null,
+              };
+            }, repoRoot);
+            sendJson(res, 200, result);
+          } catch (err) {
+            sendJson(res, 500, { error: (err as Error).message });
+          }
+        }
       } else if (url.pathname === "/api/worktrees" && req.method === "GET") {
         sendJson(res, 200, { worktrees: listStudioWorktrees(repoRoot) });
       } else if (url.pathname === "/api/worktrees" && req.method === "POST") {

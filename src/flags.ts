@@ -59,7 +59,7 @@ export const FLAGS: FeatureFlag[] = [
   {
     id: "studio.worktrees",
     owner: "studio",
-    status: "scaffolded",
+    status: "experimental",
     defaultEnabled: false,
     requiresApproval: false,
     description: "Worktree creation, tracking, cleanup, and PR promotion per agent run.",
