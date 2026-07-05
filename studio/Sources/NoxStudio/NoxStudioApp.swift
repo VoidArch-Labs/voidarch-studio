@@ -6,11 +6,13 @@ import SwiftUI
 @main
 struct NoxStudioApp: App {
     @StateObject private var daemon = DaemonClient()
+    @StateObject private var profiles = ProfileStore()
 
     var body: some Scene {
         WindowGroup("Nox Studio") {
             RootView()
                 .environmentObject(daemon)
+                .environmentObject(profiles)
                 .frame(minWidth: 1100, minHeight: 720)
         }
     }

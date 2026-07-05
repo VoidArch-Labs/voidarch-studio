@@ -188,12 +188,92 @@ struct RunsPanel: View {
 }
 
 struct ProvidersPanel: View {
+    @EnvironmentObject var daemon: DaemonClient
+    @EnvironmentObject var store: ProfileStore
+    @State private var selectedId: String?
+    @State private var draft: ProviderProfile?
+    @State private var previewTask = "example: fix the dashboard route issue"
+
     var body: some View {
-        ContentUnavailableView(
-            "Provider launch profiles",
-            systemImage: "cpu",
-            description: Text("MVP scope (2026-07-06): Claude Code, Codex CLI, generic shell — command template, model, effort, env, prompt-injection mode. Subscription-first; no paid gateways by default.")
+        HSplitView {
+            List(store.profiles, selection: $selectedId) { p in
+                VStack(alignment: .leading) {
+                    Text(p.displayName).font(.headline)
+                    Text("\(p.commandTemplate) \(p.argsTemplate.joined(separator: " "))")
+                        .font(.caption.monospaced()).foregroundStyle(.secondary)
+                }
+                .tag(p.id)
+            }
+            .frame(minWidth: 220)
+            if let d = draft {
+                editor(d)
+            } else {
+                ContentUnavailableView("Select a profile", systemImage: "cpu")
+            }
+        }
+        .onChange(of: selectedId) { _, id in
+            draft = store.profiles.first { $0.id == id }
+        }
+    }
+
+    private func binding<T>(_ keyPath: WritableKeyPath<ProviderProfile, T>) -> Binding<T> {
+        Binding(
+            get: { draft![keyPath: keyPath] },
+            set: { draft?[keyPath: keyPath] = $0 }
         )
+    }
+
+    @ViewBuilder private func editor(_ d: ProviderProfile) -> some View {
+        let prompt = PromptSpec().render(
+            task: previewTask,
+            contextPack: daemon.attachedContextPack?.markdown ?? "(no context pack attached)",
+            worktreePath: daemon.worktrees.first?.path ?? "(no worktree)"
+        )
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                Form {
+                    TextField("Display name", text: binding(\.displayName))
+                    TextField("Command", text: binding(\.commandTemplate))
+                    TextField("Args (space-separated)", text: Binding(
+                        get: { draft!.argsTemplate.joined(separator: " ") },
+                        set: { draft?.argsTemplate = $0.split(separator: " ").map(String.init) }
+                    ))
+                    TextField("Default model", text: binding(\.defaultModel))
+                    TextField("Effort", text: binding(\.effort))
+                    TextField("Env vars (KEY=V,KEY2=V2)", text: Binding(
+                        get: { draft!.envVars.map { "\($0.key)=\($0.value)" }.sorted().joined(separator: ",") },
+                        set: { text in
+                            var env: [String: String] = [:]
+                            for pair in text.split(separator: ",") {
+                                let kv = pair.split(separator: "=", maxSplits: 1).map(String.init)
+                                if kv.count == 2 { env[kv[0]] = kv[1] }
+                            }
+                            draft?.envVars = env
+                        }
+                    ))
+                    Toggle("Interactive", isOn: binding(\.supportsInteractive))
+                    Picker("Prompt injection", selection: binding(\.promptInjectionMode)) {
+                        ForEach(PromptInjectionMode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                    }
+                    Button("Save") {
+                        if let draft { store.update(draft) }
+                    }
+                }
+                Divider()
+                Text("Final prompt preview").font(.headline)
+                TextField("Preview task text", text: $previewTask).textFieldStyle(.roundedBorder)
+                Text("hash: \(promptHash(prompt))")
+                    .font(.caption.monospaced()).foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                Text(prompt)
+                    .font(.caption.monospaced())
+                    .textSelection(.enabled)
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 6))
+            }
+            .padding()
+        }
     }
 }
 

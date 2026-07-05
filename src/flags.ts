@@ -75,7 +75,7 @@ export const FLAGS: FeatureFlag[] = [
   {
     id: "studio.promptRegistry",
     owner: "studio",
-    status: "planned",
+    status: "scaffolded",
     defaultEnabled: false,
     requiresApproval: false,
     description: "Versioned system prompts/presets for agent launches (issue #10).",
@@ -83,7 +83,7 @@ export const FLAGS: FeatureFlag[] = [
   {
     id: "studio.providerRouter",
     owner: "studio",
-    status: "scaffolded",
+    status: "experimental",
     defaultEnabled: false,
     requiresApproval: false,
     description: "Provider/model routing controller, subscription-first (issue #9). Seeds exist: launcher provider registry, haiku verify-clamp.",
