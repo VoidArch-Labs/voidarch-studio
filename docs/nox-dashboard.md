@@ -1,5 +1,8 @@
 # Nox dashboard — agent control room
 
+This dashboard is the **Nox Studio MVP surface** (product split + feature flags:
+[`mvp/nox-and-nox-studio-mvp.md`](mvp/nox-and-nox-studio-mvp.md)).
+
 `pnpm dfc:dashboard [--repo-root /path/to/repo] [--port 4949]` → http://127.0.0.1:4949
 
 Single-page, aurora-dark control room for a repo's AI development workflow. Local-only

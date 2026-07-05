@@ -1,9 +1,9 @@
 {
   "name": "dev-flow-control",
-  "version": "0.2.3",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
-  "description": "Claude Code plugin with a shared, agent-neutral hosted SurrealDB dev-memory CLI (dfc).",
+  "description": "Nox (repo memory/query engine) + Nox Studio (agent control room) as a Claude Code plugin with an agent-neutral SurrealDB dev-memory CLI (dfc).",
   "license": "MIT",
   "scripts": {
     "dfc:db:check": "tsx scripts/dfc-db-check.ts",
@@ -31,6 +31,7 @@
     "dfc:memory:gc": "tsx scripts/dfc-memory-gc.ts",
     "dfc:grok-build": "tsx scripts/dfc-grok-build.ts",
     "dfc:validate-hooks": "bash scripts/dfc-validate-hooks.sh",
+    "dfc:flags": "tsx scripts/dfc-flags.ts",
     "dfc:init": "tsx scripts/dfc-init.ts",
     "dfc:dashboard": "tsx scripts/dfc-dashboard.ts",
     "typecheck": "tsc --noEmit"

@@ -1,7 +1,21 @@
-# dev-flow-control
+# dev-flow-control — Nox & Nox Studio
 
-A Claude Code plugin pack for **subscription-first, token-efficient, higher-autonomy,
-higher-accuracy** autonomous development. It turns Claude Code into a development
+Two products in one repo (see [`docs/mvp/nox-and-nox-studio-mvp.md`](docs/mvp/nox-and-nox-studio-mvp.md)
+for the canonical MVP spec and boundary):
+
+- **Nox** — a lightweight plug-and-play repo **memory and query engine** (the `pnpm dfc:*`
+  CLI + embedded SurrealDB): if it retrieves, remembers, indexes, searches, or explains
+  repo context, it's Nox.
+- **Nox Studio** — a heavyweight power-user **agent orchestration control room**
+  (`pnpm dfc:dashboard`): if it launches, routes, controls, observes, approves, or manages
+  agents, it's Studio. Planned Studio modules are feature-flagged (`pnpm dfc:flags`) and
+  never presented as implemented until they are.
+
+The repo is a TypeScript/npm package; the only Rust component is the **external, optional**
+`graphify-surreal` graph producer used by `pnpm dfc:graph:build`.
+
+Historically this is a Claude Code plugin pack for **subscription-first, token-efficient,
+higher-autonomy, higher-accuracy** autonomous development. It turns Claude Code into a development
 *supervisor* instead of a terminal janitor: Claude reasons and routes, while specialized
 tools handle Git state, repo indexing, current docs, web extraction, verification, security
 checks, async branch work, and workflow visibility.
@@ -24,7 +38,7 @@ checks, async branch work, and workflow visibility.
 
 ## Status
 
-**v0.3.0 — drop-in development-control plugin.** Ships the manifest, 17 skills (7 workflow +
+**v0.4.0 — drop-in development-control plugin.** Ships the manifest, 17 skills (7 workflow +
 10 `/dfc-*` dev-memory/dashboard/setup), 10 agents, 7 fail-closed hooks, a **per-repo web
 dashboard** (`pnpm dfc:dashboard`), a one-shot target-repo scaffold (`pnpm dfc:init`), the
 read-only GitHub MCP config, `CLAUDE.md`/`AGENTS.md` templates, 9 flow docs, and optional MCP

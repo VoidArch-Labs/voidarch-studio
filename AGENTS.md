@@ -1,6 +1,6 @@
 # AGENTS.md
 
-This repository is the canonical **Claude Code plugin** `dev-flow-control`. **Claude Code is the canonical local supervisor**; Codex and future agents use the same repo-local `dfc` CLI commands for dev memory. The memory layer itself is agent-neutral — every agent reads and writes the same per-repo SurrealDB database.
+This repository is the canonical **Claude Code plugin** `dev-flow-control`, housing two products: **Nox** (repo memory/query engine — the `pnpm dfc:*` CLI below) and **Nox Studio** (the `pnpm dfc:dashboard` agent control room). Boundary and MVP spec: `docs/mvp/nox-and-nox-studio-mvp.md`. **Claude Code is the canonical local supervisor**; Codex and future agents use the same repo-local `dfc` CLI commands for dev memory. The memory layer itself is agent-neutral — every agent reads and writes the same per-repo SurrealDB database. The canonical command surface is `pnpm dfc:*` (TypeScript/tsx); the only Rust piece is the external optional `graphify-surreal` binary behind `pnpm dfc:graph:build`.
 
 ## Shared Dev Memory
 
