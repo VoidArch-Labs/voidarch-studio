@@ -27,3 +27,6 @@ dist/
 
 # Embedded SurrealKV data (local dev-memory database)
 .dfc/dev-memory/
+
+# Swift build artifacts
+studio/.build/
