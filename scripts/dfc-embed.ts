@@ -1,12 +1,13 @@
-// dfc:embed — embed document chunks into vector memory (approval-gated).
+// dfc:embed — embed document chunks into vector memory (local-first, paid-gated).
 //
 //   pnpm dfc:embed --dry-run               # plan only; no API calls, no creds needed
-//   pnpm dfc:embed --limit 25              # embed up to 25 chunks (provider must be set)
+//   pnpm dfc:embed --limit 25              # embed up to 25 chunks (local model by default)
 //   pnpm dfc:embed --approve               # one-shot approval for a PAID provider
 //
-// Provider is explicit via DFC_EMBED_PROVIDER (none|ollama|openai). The paid path
-// (openai) is NEVER called without OPENAI_API_KEY *and* approval. With no provider
-// configured, this is a no-op that explains how to enable a provider.
+// Provider is selected via DFC_EMBED_PROVIDER (local|none|ollama|openai). The
+// zero-key default is local Transformers.js with a cache outside the repo. The
+// paid path (openai) is NEVER called unless DFC_EMBED_PROVIDER=openai,
+// OPENAI_API_KEY is present, and approval is explicit.
 
 import { normalizeSourceAgent } from "../src/memory/agents.js";
 import { parseArgs, repoRootFromArgs } from "../src/memory/cli.js";
@@ -32,6 +33,7 @@ async function main(): Promise<void> {
   console.log(`  provider:   ${cfg.provider}`);
   console.log(`  model:      ${cfg.model || "(none)"}`);
   console.log(`  dimension:  ${cfg.dimension || "(infer from first vector)"}`);
+  if (cfg.provider === "local") console.log(`  cache:      ${cfg.cacheDir}`);
   console.log(`  paid:       ${cfg.paid}${cfg.paid ? `  (key=${cfg.apiKeyPresent}, approved=${cfg.approved})` : ""}`);
   console.log(`  available:  ${cfg.available}`);
   console.log(`  status:     ${cfg.reason}`);

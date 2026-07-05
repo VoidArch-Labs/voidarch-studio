@@ -5,6 +5,9 @@
   "type": "module",
   "description": "Nox (repo memory/query engine) + Nox Studio (agent control room) as a Claude Code plugin with an agent-neutral SurrealDB dev-memory CLI (dfc).",
   "license": "MIT",
+  "bin": {
+    "nox": "./bin/nox.js"
+  },
   "scripts": {
     "dfc:db:check": "tsx scripts/dfc-db-check.ts",
     "dfc:db:migrate": "tsx scripts/dfc-db-migrate.ts",
@@ -33,10 +36,12 @@
     "dfc:validate-hooks": "bash scripts/dfc-validate-hooks.sh",
     "dfc:flags": "tsx scripts/dfc-flags.ts",
     "dfc:init": "tsx scripts/dfc-init.ts",
+    "dfc:nox": "tsx scripts/dfc-nox.ts",
     "dfc:dashboard": "tsx scripts/dfc-dashboard.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@huggingface/transformers": "^4.2.0",
     "@surrealdb/node": "^3.0.3",
     "surrealdb": "^2.0.4"
   },

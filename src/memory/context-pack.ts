@@ -73,6 +73,11 @@ interface MemoryRow {
   tags: unknown;
   source_agent?: string;
   created_at: unknown;
+  review_status?: string;
+  confidence?: number;
+  last_verified_at?: unknown;
+  stale_reason?: string;
+  superseded_by?: string;
 }
 
 interface SnippetRow extends MemoryRow {
@@ -131,6 +136,57 @@ function excerpt(content: string, terms: string[], max = 320): string {
   return content.slice(start, start + max).replace(/\s+/g, " ").trim();
 }
 
+function lifecycleHint(r: MemoryRow): ContextMemoryEntry["lifecycle"] {
+  const staleReason = String(r.stale_reason || "");
+  const supersededBy = String(r.superseded_by || "");
+  const review = String(r.review_status || "");
+  const lastVerifiedAt = toIso(r.last_verified_at);
+  return {
+    status: supersededBy ? "superseded" : staleReason ? "stale" : review === "pending" ? "pending_review" : "active",
+    confidence: typeof r.confidence === "number" ? r.confidence : undefined,
+    last_verified_at: lastVerifiedAt || undefined,
+    stale_reason: staleReason || undefined,
+    superseded_by: supersededBy || undefined,
+  };
+}
+
+function lifecyclePenalty(lifecycle: ContextMemoryEntry["lifecycle"]): number {
+  if (lifecycle?.status === "superseded") return 0.15;
+  if (lifecycle?.status === "stale") return 0.35;
+  if (lifecycle?.status === "pending_review") return 0.75;
+  return 1;
+}
+
+function buildQueryPlan(
+  goal: string,
+  terms: string[],
+  riskTerms: string[],
+): ContextPack["query_plan"] {
+  const lower = goal.toLowerCase();
+  const mode =
+    riskTerms.length ? "safety" :
+    /\b(fail|error|debug|test|ci|regression)\b/.test(lower) ? "debug" :
+    /\b(graph|dependency|impact|architecture|call|symbol)\b/.test(lower) ? "graph" :
+    /\b(decision|lesson|memory|remember|why)\b/.test(lower) ? "memory" :
+    /\b(similar|semantic|related|context)\b/.test(lower) ? "semantic" :
+    "hybrid";
+
+  return {
+    mode,
+    terms,
+    risk_terms: riskTerms,
+    channels: [
+      { channel: "files", reason: "BM25 and path matches anchor task-specific code.", target_items: 20 },
+      { channel: "docs", reason: "Documentation chunks capture setup and product rules.", target_items: 8 },
+      { channel: "memory", reason: "Durable decisions, evidence, lessons, and repo facts preserve prior context.", target_items: 10 },
+      { channel: "graph", reason: "Graph nodes and neighborhoods expose symbols, dependencies, and freshness.", target_items: 8 },
+      { channel: "vectors", reason: "Local embeddings add semantic recall when indexed chunks exist.", target_items: 6 },
+      { channel: "state", reason: "Open tasks and blockers prevent stale or conflicting work.", target_items: 10 },
+      { channel: "runs", reason: "Recent runs and tool events explain verification and failure history.", target_items: 8 },
+    ],
+  };
+}
+
 async function fetchMemory(
   db: Surreal,
   table: "decision" | "evidence_item" | "lesson" | "repo_fact",
@@ -141,7 +197,8 @@ async function fetchMemory(
 ): Promise<ContextMemoryEntry[]> {
   const rows = await queryResult<MemoryRow[]>(
     db,
-    `SELECT summary, text, tags, source_agent, created_at FROM type::table($t)
+    `SELECT summary, text, tags, source_agent, created_at, review_status, confidence,
+            last_verified_at, stale_reason, superseded_by FROM type::table($t)
      WHERE repo_id = $repo ORDER BY created_at DESC LIMIT 40`,
     { t: table, repo: repoId },
   );
@@ -152,16 +209,20 @@ async function fetchMemory(
         ? Math.max(0, (now - new Date(createdIso).getTime()) / 86_400_000)
         : 9999;
       const summary = r.summary || (r.text || "").slice(0, 120);
+      const lifecycle = lifecycleHint(r);
+      const baseScore = scoreMemory(
+        { summary, text: r.text || "", ageDays },
+        terms,
+        riskTerms,
+      );
       return {
         summary,
         tags: Array.isArray(r.tags) ? (r.tags as string[]) : [],
         source_agent: r.source_agent || "manual",
         created_at: createdIso,
-        score: scoreMemory(
-          { summary, text: r.text || "", ageDays },
-          terms,
-          riskTerms,
-        ),
+        lifecycle,
+        reason: `${table} memory matched task terms; lifecycle=${lifecycle?.status ?? "active"}`,
+        score: Math.round(baseScore * lifecyclePenalty(lifecycle) * 100) / 100,
       };
     })
     .sort((a, b) => b.score - a.score)
@@ -177,7 +238,8 @@ async function fetchSnippets(
 ): Promise<ContextSnippetEntry[]> {
   const rows = await queryResult<SnippetRow[]>(
     db,
-    `SELECT summary, text, tags, source_agent, language, source_path, created_at FROM snippet
+    `SELECT summary, text, tags, source_agent, language, source_path, created_at, review_status,
+            confidence, last_verified_at, stale_reason, superseded_by FROM snippet
      WHERE repo_id = $repo ORDER BY created_at DESC LIMIT 40`,
     { repo: repoId },
   );
@@ -188,19 +250,23 @@ async function fetchSnippets(
         ? Math.max(0, (now - new Date(createdIso).getTime()) / 86_400_000)
         : 9999;
       const summary = r.summary || (r.text || "").slice(0, 120);
+      const lifecycle = lifecycleHint(r);
+      const baseScore = scoreMemory(
+        { summary, text: r.text || "", ageDays },
+        terms,
+        riskTerms,
+      );
       return {
         summary,
         tags: Array.isArray(r.tags) ? (r.tags as string[]) : [],
         source_agent: r.source_agent || "manual",
         created_at: createdIso,
+        lifecycle,
+        reason: `snippet memory matched task terms; lifecycle=${lifecycle?.status ?? "active"}`,
         excerpt: excerpt(r.text || "", terms),
         language: r.language || undefined,
         source_path: r.source_path || undefined,
-        score: scoreMemory(
-          { summary, text: r.text || "", ageDays },
-          terms,
-          riskTerms,
-        ),
+        score: Math.round(baseScore * lifecyclePenalty(lifecycle) * 100) / 100,
       };
     })
     .sort((a, b) => b.score - a.score)
@@ -334,12 +400,13 @@ export async function buildContextPack(
   db: Surreal,
   repoId: string,
   task: string,
-  opts: { repoRoot?: string } = {},
+  opts: { repoRoot?: string; allowPaidEmbeddings?: boolean } = {},
 ): Promise<ContextPack> {
   const goal = task.trim();
   const phase: Phase = inferPhase(goal);
   const terms = Array.from(new Set(tokenize(goal))).slice(0, 12);
   const riskTerms = detectRiskTerms(goal);
+  const queryPlan = buildQueryPlan(goal, terms, riskTerms);
 
   // --- candidate files: full-text hits + filename/path-substring hits ---
   const fileMap = new Map<string, FileRow>();
@@ -457,7 +524,9 @@ export async function buildContextPack(
   let vectorChunks: ContextVectorChunkEntry[] = [];
   try {
     const embedCfg = resolveEmbedConfig({ repoRoot: opts.repoRoot });
-    if (embedCfg.available) vectorChunks = await queryVectors(db, embedCfg, repoId, goal, 6);
+    if (embedCfg.available && (!embedCfg.paid || opts.allowPaidEmbeddings !== false)) {
+      vectorChunks = await queryVectors(db, embedCfg, repoId, goal, 6);
+    }
   } catch {
     vectorChunks = [];
   }
@@ -501,6 +570,7 @@ export async function buildContextPack(
   const dropped: string[] = [];
   const pack: ContextPack = {
     task: { goal, phase },
+    query_plan: queryPlan,
     repo_context: { files: [], symbols: [], graph_neighborhood: [] },
     document_context: { chunks: [] },
     vector_context: { chunks: [] },

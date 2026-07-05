@@ -5,6 +5,10 @@ This dashboard is the **Nox Studio MVP surface** (product split + feature flags:
 
 `pnpm dfc:dashboard [--repo-root /path/to/repo] [--port 4949]` → http://127.0.0.1:4949
 
+For the small Nox memory-engine setup/status page, use `pnpm dfc:nox` or `nox page`.
+That page is intentionally limited to setup, counts, embeddings, graph freshness, search,
+and context-pack preview. It is not this Studio control room.
+
 Single-page, aurora-dark control room for a repo's AI development workflow. Local-only
 (binds 127.0.0.1). Frontend lives in [`dashboard/`](../dashboard/) (plain HTML/CSS/JS,
 no dependencies); the server is [`scripts/dfc-dashboard.ts`](../scripts/dfc-dashboard.ts).

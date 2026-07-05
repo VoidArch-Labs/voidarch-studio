@@ -61,7 +61,8 @@ No Docker, no Rust, no SurrealDB server, no GitHub/Vercel token, no paid key. Em
 SurrealKV (`.dfc/dev-memory/`) is the default backend; hosted SurrealDB is an optional
 advanced configuration.
 
-**MVP command surface** (today's canonical names; a future `nox` binary may alias them):
+**MVP command surface** (`pnpm dfc:*` remains the compatibility contract; the `nox`
+package bin aliases the Nox memory/query commands):
 
 | Capability | Command | State |
 | --- | --- | --- |
@@ -72,24 +73,28 @@ advanced configuration.
 | memories (5 kinds) | `dfc:remember`, `dfc:memory` | implemented |
 | task / blocker state | `dfc:task`, `dfc:blocker` | implemented |
 | graph | `dfc:graph:build` (Rust producer) / `dfc:graph:import` (JSON), `dfc:graph:query`, `dfc:graph:status` | implemented |
-| vectors | `dfc:embed` | implemented; **local no-key default is Part 2 work** |
-| status / doctor | `dfc:status`, `dfc:memory:doctor`, `dfc:memory:gc` | implemented |
+| vectors | `dfc:embed`, `nox embed` | implemented; local no-key default |
+| status / doctor | `dfc:status`, `dfc:memory:doctor`, `dfc:memory:gc`, `nox status`, `nox memory doctor`, `nox memory gc` | implemented |
 | metrics / sync | `dfc:metrics`, `dfc:sync` | implemented |
+| minimal Nox page | `dfc:nox`, `nox page` | implemented |
 
 **Embedding rules (hard):**
 
-- The default embedding path must work **locally without paid API keys** (Part 2:
-  auto-downloaded local model, cached outside the repo).
+- The default embedding path works **locally without paid API keys**:
+  Transformers.js auto-downloads a small ONNX MiniLM model on first run and caches it
+  outside the repo (override with `DFC_EMBED_CACHE_DIR` only when intentional).
 - Embeddings dedupe by **content hash** (already implemented).
 - An **OpenAI-compatible endpoint** (base URL + key env var + model + dimensions) is the
   optional alternative.
-- **Paid embedding calls never happen silently**: explicit `DFC_EMBED_PROVIDER`, plus
-  `OPENAI_API_KEY` **and** approval (`DFC_EMBED_APPROVED=1` or `--approve`) for the paid
-  path. This gate is live today and must survive every refactor.
+- **Paid embedding calls never happen silently**: explicit
+  `DFC_EMBED_PROVIDER=openai`, plus `OPENAI_API_KEY` **and** approval
+  (`DFC_EMBED_APPROVED=1` or `--approve`) for the paid path. This gate is live today
+  and must survive every refactor.
 
-**Local page:** Nox itself gets only a minimal setup/status page (indexed counts,
-embedding status, graph freshness, memory counts, search form, context-pack preview).
-The full control room is Studio, not Nox.
+**Local page:** Nox itself has only a minimal setup/status page (`pnpm dfc:nox` or
+`nox page`): setup commands, indexed counts, embedding status, graph freshness, memory
+counts, search form, and context-pack preview. The full control room is Studio, not
+Nox.
 
 **Out of scope for Nox:** agent launcher, worktree manager, terminals, provider/quota
 routing, prompt registry, MCP/hook gateway, PR automation, GitHub/Vercel panels,
@@ -146,9 +151,9 @@ Statuses: `planned` (nothing built) · `scaffolded` (code exists, off) · `exper
 (on, unstable) · `stable`. A flag being listed is **not** a claim that it works — the
 status is the claim, and it must stay truthful.
 
-Nox flags: `memory.localEmbeddings` (planned), `memory.openaiCompatibleEmbeddings`
-(stable, approval-gated), `memory.graph` (stable), `memory.contextPackExplain` (planned),
-`memory.lifecycle` (planned).
+Nox flags: `memory.localEmbeddings` (stable), `memory.openaiCompatibleEmbeddings`
+(stable, approval-gated), `memory.graph` (stable), `memory.contextPackExplain`
+(experimental), `memory.lifecycle` (scaffolded).
 
 Studio flags: see `src/flags.ts` — `studio.worktrees`, `studio.terminal`,
 `studio.promptRegistry`, `studio.providerRouter`, `studio.quotaTracking`,
@@ -190,10 +195,10 @@ updated, issue #17 resolved. Tracking: issue #17 (closed by this part).
 
 ### Part 2 — Nox memory-engine MVP hardening
 
-Local no-key embedding default (auto-download, cache outside repo, content-hash dedupe —
-flips `memory.localEmbeddings` to implemented), OpenAI-compatible endpoint config polish,
-minimal Nox setup/status page (subset of dashboard, no Studio panels), query planner
-seed, memory lifecycle seed, npm-first packaging pass (`nox` bin alias).
+Local no-key embedding default (auto-download, cache outside repo, content-hash dedupe),
+OpenAI-compatible endpoint config polish, minimal Nox setup/status page (subset of
+dashboard, no Studio panels), query planner seed, memory lifecycle seed, npm-first
+packaging pass (`nox` bin alias).
 Tracking: [#11](https://github.com/pappdavid/dev-flow-control/issues/11),
 [#12](https://github.com/pappdavid/dev-flow-control/issues/12),
 [#16](https://github.com/pappdavid/dev-flow-control/issues/16); tracking issue

@@ -87,6 +87,14 @@ export interface ContextMemoryEntry {
   source_agent: SourceAgent | string;
   created_at: string;
   score: number;
+  lifecycle?: {
+    status: "active" | "pending_review" | "stale" | "superseded";
+    confidence?: number;
+    last_verified_at?: string;
+    stale_reason?: string;
+    superseded_by?: string;
+  };
+  reason?: string;
 }
 
 /** Snippet memory entry: memory shape + code excerpt and optional provenance. */
@@ -292,6 +300,12 @@ export interface ContextVectorChunkEntry {
 
 export interface ContextPack {
   task: { goal: string; phase: Phase };
+  query_plan?: {
+    mode: "hybrid" | "semantic" | "graph" | "memory" | "debug" | "safety";
+    terms: string[];
+    risk_terms: string[];
+    channels: Array<{ channel: string; reason: string; target_items: number }>;
+  };
   repo_context: {
     files: ContextFileEntry[];
     symbols: ContextSymbolEntry[];

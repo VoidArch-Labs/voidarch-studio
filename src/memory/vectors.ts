@@ -1,9 +1,11 @@
-// Vector memory: an OPTIONAL, approval-gated retrieval channel.
+// Vector memory: a local-first retrieval channel.
 //
-// Provider is explicit via DFC_EMBED_PROVIDER (none | ollama | openai):
-//   - none   : default; dry-run/scaffolding only, never embeds.
+// Provider is selected via DFC_EMBED_PROVIDER (local | none | ollama | openai):
+//   - local  : default; no-key Transformers.js model, cached outside the repo.
+//   - none   : dry-run/scaffolding only, never embeds.
 //   - ollama : local/free; embeds against DFC_EMBED_HOST (default :11434).
-//   - openai : PAID; requires OPENAI_API_KEY *and* explicit approval
+//   - openai : PAID; requires explicit DFC_EMBED_PROVIDER=openai,
+//              OPENAI_API_KEY, and explicit approval
 //              (DFC_EMBED_APPROVED=1 or --approve). Never called silently.
 //
 // Embeddings dedupe by content_hash per model, enforce a single dimension per
@@ -11,6 +13,8 @@
 // migration is intentionally dimension-agnostic and defines no MTREE index).
 
 import { createHash } from "node:crypto";
+import { mkdirSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { RecordId, type Surreal } from "surrealdb";
 import { buildDocPlan } from "./docs.js";
@@ -33,7 +37,16 @@ function envValue(k: string, repoRoot?: string): string {
   return (process.env[k] ?? dfcFileEnv(repoRoot)[k] ?? "").trim();
 }
 
-export type EmbedProvider = "none" | "ollama" | "openai";
+export type EmbedProvider = "local" | "none" | "ollama" | "openai";
+
+const DEFAULT_LOCAL_MODEL = "onnx-community/all-MiniLM-L6-v2-ONNX";
+
+type LocalFeatureExtractor = (
+  text: string | string[],
+  opts: { pooling: "mean"; normalize: boolean },
+) => Promise<{ tolist(): unknown }>;
+
+const localExtractors = new Map<string, Promise<LocalFeatureExtractor>>();
 
 export interface EmbedConfig {
   provider: EmbedProvider;
@@ -41,6 +54,7 @@ export interface EmbedConfig {
   modelKey: string; // "<provider>:<model>"
   dimension: number; // configured expected dimension (0 = infer from first vector)
   host: string;
+  cacheDir: string;
   paid: boolean;
   apiKeyPresent: boolean;
   approved: boolean;
@@ -50,9 +64,29 @@ export interface EmbedConfig {
 }
 
 function defaultModel(p: EmbedProvider): string {
+  if (p === "local") return DEFAULT_LOCAL_MODEL;
   if (p === "ollama") return "nomic-embed-text";
   if (p === "openai") return "text-embedding-3-small";
   return "";
+}
+
+function defaultLocalCacheDir(): string {
+  const base =
+    process.env.XDG_CACHE_HOME ||
+    (process.platform === "darwin"
+      ? join(homedir(), "Library", "Caches")
+      : process.platform === "win32" && process.env.LOCALAPPDATA
+        ? process.env.LOCALAPPDATA
+        : join(homedir(), ".cache"));
+  return join(base, "dev-flow-control", "transformers");
+}
+
+function normalizeProvider(raw: string): EmbedProvider | "unknown" {
+  const provider = (raw || "local").toLowerCase();
+  if (provider === "local" || provider === "none" || provider === "ollama" || provider === "openai") {
+    return provider;
+  }
+  return "unknown";
 }
 
 function supportsOpenAiDimensions(model: string): boolean {
@@ -63,13 +97,14 @@ function supportsOpenAiDimensions(model: string): boolean {
 export function resolveEmbedConfig(opts?: { approve?: boolean; repoRoot?: string }): EmbedConfig {
   const fileEnv = dfcFileEnv(opts?.repoRoot);
   const get = (k: string): string => (process.env[k] ?? fileEnv[k] ?? "").trim();
-  const provider = (get("DFC_EMBED_PROVIDER") || "none").toLowerCase() as EmbedProvider;
-  const model = get("DFC_EMBED_MODEL") || defaultModel(provider);
+  const provider = normalizeProvider(get("DFC_EMBED_PROVIDER"));
+  const model = provider === "unknown" ? get("DFC_EMBED_MODEL") : get("DFC_EMBED_MODEL") || defaultModel(provider);
   const dimension = Number.parseInt(get("DFC_EMBED_DIMENSION") || "0", 10) || 0;
   const paid = provider === "openai";
   const apiKey = get("OPENAI_API_KEY");
   const apiKeyPresent = Boolean(apiKey);
   const approved = opts?.approve === true || get("DFC_EMBED_APPROVED") === "1";
+  const cacheDir = get("DFC_EMBED_CACHE_DIR") || defaultLocalCacheDir();
   const host = (
     get("DFC_EMBED_HOST") ||
     (provider === "ollama" ? "http://localhost:11434" : provider === "openai" ? "https://api.openai.com" : "")
@@ -77,8 +112,11 @@ export function resolveEmbedConfig(opts?: { approve?: boolean; repoRoot?: string
 
   let available = false;
   let reason = "";
-  if (provider === "none") {
-    reason = "no embedding provider configured — set DFC_EMBED_PROVIDER=ollama|openai (dry-run only)";
+  if (provider === "local") {
+    available = true;
+    reason = `local no-key provider (model ${model}, cache ${cacheDir})`;
+  } else if (provider === "none") {
+    reason = "embedding provider disabled (dry-run/scaffolding only)";
   } else if (provider === "ollama") {
     available = true;
     reason = `local/free provider at ${host} (model ${model || "(unset)"})`;
@@ -90,14 +128,60 @@ export function resolveEmbedConfig(opts?: { approve?: boolean; repoRoot?: string
       reason = `approved PAID provider (model ${model})`;
     }
   } else {
-    reason = `unknown provider "${provider}"`;
+    reason = `unknown provider "${get("DFC_EMBED_PROVIDER")}"`;
   }
 
-  return { provider, model, modelKey: `${provider}:${model}`, dimension, host, paid, apiKeyPresent, apiKey, approved, available, reason };
+  return {
+    provider: provider === "unknown" ? "none" : provider,
+    model,
+    modelKey: `${provider === "unknown" ? "none" : provider}:${model}`,
+    dimension,
+    host,
+    cacheDir,
+    paid,
+    apiKeyPresent,
+    apiKey,
+    approved,
+    available,
+    reason,
+  };
+}
+
+async function localExtractor(cfg: EmbedConfig): Promise<LocalFeatureExtractor> {
+  const key = `${cfg.model}\n${cfg.cacheDir}`;
+  let extractor = localExtractors.get(key);
+  if (!extractor) {
+    extractor = (async () => {
+      mkdirSync(cfg.cacheDir, { recursive: true });
+      const { env, pipeline } = await import("@huggingface/transformers");
+      env.cacheDir = cfg.cacheDir;
+      env.allowLocalModels = true;
+      env.allowRemoteModels = true; // first run downloads, later runs reuse the cache.
+      env.useFSCache = true;
+      return await pipeline("feature-extraction", cfg.model) as LocalFeatureExtractor;
+    })();
+    localExtractors.set(key, extractor);
+  }
+  return extractor;
+}
+
+function vectorFromTensorList(value: unknown): number[] {
+  const arr = Array.isArray(value) && Array.isArray(value[0]) ? value[0] : value;
+  if (!Array.isArray(arr)) throw new Error("local embeddings: tensor output was not an array");
+  const vec = arr.map((x) => Number(x));
+  if (!vec.length || vec.some((x) => !Number.isFinite(x))) {
+    throw new Error("local embeddings: tensor output was empty or non-numeric");
+  }
+  return vec;
 }
 
 /** Embed one string. Throws for non-embedding providers or when a gate is closed. */
 export async function embedText(cfg: EmbedConfig, text: string): Promise<number[]> {
+  if (cfg.provider === "local") {
+    const extractor = await localExtractor(cfg);
+    const output = await extractor(text, { pooling: "mean", normalize: true });
+    return vectorFromTensorList(output.tolist());
+  }
   if (cfg.provider === "ollama") {
     const res = await fetch(`${cfg.host}/api/embeddings`, {
       method: "POST",

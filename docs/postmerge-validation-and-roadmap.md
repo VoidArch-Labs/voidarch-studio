@@ -193,9 +193,17 @@ corrected to `wss://host`; once fixed, the host resolved and `/health` returned 
 
 ## 6. Lessons from the Nox dashboard round (2026-07-05)
 
-- The dashboard is now **Nox** — single-page control room (`docs/nox-dashboard.md`), frontend split out to `dashboard/` (plain HTML/CSS/JS), server still `scripts/dfc-dashboard.ts`.
+- The dashboard is now the **Nox Studio** single-page control room (`docs/nox-dashboard.md`), frontend split out to `dashboard/` (plain HTML/CSS/JS), server still `scripts/dfc-dashboard.ts`.
 - `[hidden]` loses to any CSS `display:` rule on the same element — pair custom-displayed elements with an explicit `[hidden] { display: none; }`.
 - `--repo-root` with a **relative** path resolves against the process cwd; `pnpm --dir` changes that cwd, so launcher configs must pass absolute paths.
 - Spawning `claude -p` from a server that was itself started inside a Claude session works once `CLAUDECODE`/`CLAUDE_CODE_*` are stripped from the child env (the nested-session guard is env-based). Verified live: plan-mode run returned its result through stream-json.
 - Claude Code transcripts (`~/.claude/projects/<munged path>/*.jsonl`) carry per-message `usage` (input/output/cache read/creation + model) — real token accounting needs no new instrumentation. Match the repo root **and its direct parent only**; walking all parents sweeps in unrelated projects' sessions.
 - Embedded SurrealKV + a long-lived server: serialize all DB access through one promise queue and connect/close per query, so CLI commands can interleave with dashboard refreshes.
+
+## 7. Lessons from the Nox memory-engine hardening round (2026-07-05)
+
+- Local embeddings are the default Nox path now: `pnpm dfc:embed` runs `@huggingface/transformers` with `onnx-community/all-MiniLM-L6-v2-ONNX`, auto-downloads on first run, caches outside the repo, and stores 384-dimensional vectors keyed by content hash.
+- The OpenAI-compatible provider remains a paid path: `DFC_EMBED_PROVIDER=openai` plus `OPENAI_API_KEY` plus `DFC_EMBED_APPROVED=1` or `--approve` are all required before the code can call `/v1/embeddings`.
+- A local server page can accidentally make retrieval feel "read-only" when it is not: context-pack preview may need to embed the query. The Nox page therefore suppresses paid vector query embeddings by default and requires `allowPaidEmbeddings=1` on the API call to opt in.
+- `nox` is a package bin alias for the memory/query command surface only. Studio remains behind `pnpm dfc:dashboard`; do not add launcher, worktree, terminal, MCP, or provider-routing controls to `nox`.
+- `memory.contextPackExplain` is only an experimental deterministic query-plan seed, and `memory.lifecycle` is only retrieval-facing scaffolding. Full lifecycle review/merge/promote flows remain issue #12 work.

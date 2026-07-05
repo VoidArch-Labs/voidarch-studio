@@ -53,16 +53,23 @@ pnpm dfc:docs:query --q "..."             # BM25 over document chunks
 pnpm dfc:graph:import --agent codex        # load graphify-out/graph.json (run /graphify first)
 pnpm dfc:graph:query --q "..."            # rank graph nodes + neighborhood
 pnpm dfc:graph:status                      # graph freshness vs current HEAD
-pnpm dfc:embed --dry-run                   # vector scaffolding (approval-gated; see below)
+pnpm dfc:embed --dry-run                   # local no-key vector plan; no model/API calls
+pnpm dfc:embed                             # local no-key embeddings by default
 pnpm dfc:memory:doctor                     # cross-channel health (resilient w/o DB)
 pnpm dfc:memory:gc --dry-run               # prune orphan/mismatched embeddings
 ```
 
 If `--agent` is omitted, commands default to `manual`. Supported values are `manual`, `codex`, and `claude`.
 
-**Vectors are approval-gated.** `dfc:embed` requires an explicit `DFC_EMBED_PROVIDER`
-(`ollama` local/free, or `openai`). The `openai` path additionally requires `OPENAI_API_KEY`
-**and** approval (`DFC_EMBED_APPROVED=1` or `--approve`). Never call a paid embedding API silently.
+**Vectors are local-first and paid-gated.** `dfc:embed` defaults to a no-key local
+Transformers.js model cached outside the repo. The OpenAI-compatible path only runs when
+`DFC_EMBED_PROVIDER=openai`; `OPENAI_API_KEY` is not enough by itself. It additionally
+requires explicit approval (`DFC_EMBED_APPROVED=1` or `--approve`). Never call a paid
+embedding API silently.
+
+The `nox` package bin aliases the same memory/query commands (`nox context`, `nox embed`,
+`nox page`, and related subcommands). `pnpm dfc:*` scripts remain the agent-neutral
+compatibility contract.
 
 ## Codex
 

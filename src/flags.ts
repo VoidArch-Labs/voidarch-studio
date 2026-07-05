@@ -18,10 +18,10 @@ export const FLAGS: FeatureFlag[] = [
   {
     id: "memory.localEmbeddings",
     owner: "memory",
-    status: "planned",
-    defaultEnabled: false,
+    status: "stable",
+    defaultEnabled: true,
     requiresApproval: false,
-    description: "No-key local embedding default: auto-downloaded model cached outside the repo, content-hash dedupe.",
+    description: "No-key local embedding default: Transformers.js model auto-downloads and caches outside the repo, content-hash dedupe.",
   },
   {
     id: "memory.openaiCompatibleEmbeddings",
@@ -42,18 +42,18 @@ export const FLAGS: FeatureFlag[] = [
   {
     id: "memory.contextPackExplain",
     owner: "memory",
-    status: "planned",
-    defaultEnabled: false,
+    status: "experimental",
+    defaultEnabled: true,
     requiresApproval: false,
-    description: "Query planner + per-item scoring explanation in context packs (issue #11).",
+    description: "Deterministic query-plan seed and context-pack preview metadata (issue #11/#16).",
   },
   {
     id: "memory.lifecycle",
     owner: "memory",
-    status: "planned",
+    status: "scaffolded",
     defaultEnabled: false,
     requiresApproval: false,
-    description: "Memory provenance, staleness, merge, and promotion (issue #12).",
+    description: "Retrieval-facing lifecycle hints and stale/superseded score penalty seed; review/merge/promote flows remain future work (issue #12).",
   },
   // ---- Nox Studio (agent orchestration) ----------------------------------------------
   {
