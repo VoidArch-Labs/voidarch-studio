@@ -67,7 +67,7 @@ export const FLAGS: FeatureFlag[] = [
   {
     id: "studio.terminal",
     owner: "studio",
-    status: "planned",
+    status: "scaffolded",
     defaultEnabled: false,
     requiresApproval: false,
     description: "Integrated PTY terminal sessions attached to runs/worktrees.",
@@ -171,7 +171,7 @@ export const FLAGS: FeatureFlag[] = [
   {
     id: "studio.swiftuiNativeApp",
     owner: "studio",
-    status: "planned",
+    status: "scaffolded",
     defaultEnabled: false,
     requiresApproval: false,
     description: "Native macOS Studio client consuming AG-UI events.",

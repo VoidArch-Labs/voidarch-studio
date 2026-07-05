@@ -10,12 +10,9 @@ cd studio
 swift run NoxStudio       # macOS 14+, Apple Silicon primary
 ```
 
-> **Status: scaffold, NOT compile-verified.** This machine has only Command Line Tools,
-> whose SwiftPM is broken (every `Package.swift` manifest fails to link against
-> `ManifestAPI` — verified 2026-07-05 with tools-version 5.9 and 6.0). Building any
-> Swift package, and SwiftUI app development generally, requires **full Xcode**.
-> Install Xcode and run `sudo xcode-select -s /Applications/Xcode.app` before the
-> 2026-07-06 Studio day; expect first-build fixes in these files.
+> **Status: scaffold, compile-verified.** `swift build` succeeds with Xcode 26.6
+> (verified 2026-07-05). Remaining MVP work is tracked as sequenced GitHub issues
+> under #19 — see "MVP work remaining" below.
 
 The daemon is the extended `pnpm dfc:dashboard` server (default `http://127.0.0.1:4949`)
 — start it before launching the app. Settings panel can point at another port.
@@ -28,6 +25,8 @@ The daemon is the extended `pnpm dfc:dashboard` server (default `http://127.0.0.
 - WKWebView embeds for the dashboard memory view and the Nox context-pack page.
 
 ## MVP work remaining (2026-07-06)
+
+Tracked as sequenced issues: #22 → #23 → #24 → #25 → #26 → #27 (evaluation + #19 close after all six).
 
 Daemon (extend `scripts/dfc-dashboard.ts`):
 
