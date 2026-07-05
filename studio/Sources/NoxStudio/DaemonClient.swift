@@ -7,6 +7,17 @@ struct StudioTask: Identifiable, Decodable {
     var goal: String
     var status: String
     var tags: [String]?
+
+    // Tolerant decode: legacy daemon rows may omit status/goal — one bad row
+    // must never fail the whole /api/state decode (renders as "daemon offline").
+    enum CodingKeys: String, CodingKey { case id, goal, status, tags }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        goal = try c.decodeIfPresent(String.self, forKey: .goal) ?? "(untitled)"
+        status = try c.decodeIfPresent(String.self, forKey: .status) ?? "open"
+        tags = try c.decodeIfPresent([String].self, forKey: .tags)
+    }
 }
 
 struct AgentRun: Identifiable, Decodable {
@@ -81,10 +92,10 @@ final class DaemonClient: ObservableObject {
         do {
             let (data, _) = try await URLSession.shared.data(from: baseURL.appending(path: "/api/state"))
             let state = try JSONDecoder().decode(StateResponse.self, from: data)
-            tasks = state.tasks ?? []
-            runs = state.spawned_agents ?? []
-            worktrees = state.worktrees ?? []
-            studioRuns = state.studio_runs ?? []
+            tasks = state.tasks?.elements ?? []
+            runs = state.spawned_agents?.elements ?? []
+            worktrees = state.worktrees?.elements ?? []
+            studioRuns = state.studio_runs?.elements ?? []
             healthy = true
             lastError = nil
         } catch {
@@ -198,9 +209,23 @@ private struct APIError: Decodable {
     var error: String?
 }
 
+/// Array that drops undecodable elements instead of failing the whole payload.
+private struct LossyArray<T: Decodable>: Decodable {
+    var elements: [T]
+    private struct AnyValue: Decodable {}
+    init(from decoder: Decoder) throws {
+        var c = try decoder.unkeyedContainer()
+        var out: [T] = []
+        while !c.isAtEnd {
+            if let v = try? c.decode(T.self) { out.append(v) } else { _ = try? c.decode(AnyValue.self) }
+        }
+        elements = out
+    }
+}
+
 private struct StateResponse: Decodable {
-    var tasks: [StudioTask]?
-    var spawned_agents: [AgentRun]?
-    var worktrees: [Worktree]?
-    var studio_runs: [StudioRun]?
+    var tasks: LossyArray<StudioTask>?
+    var spawned_agents: LossyArray<AgentRun>?
+    var worktrees: LossyArray<Worktree>?
+    var studio_runs: LossyArray<StudioRun>?
 }

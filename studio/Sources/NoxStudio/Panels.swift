@@ -109,6 +109,7 @@ struct WorktreesPanel: View {
                 .frame(minWidth: 260)
                 worktreeDetail
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .onChange(of: selected) { _, w in
             diff = nil
@@ -202,6 +203,7 @@ struct RunsPanel: View {
                 ContentUnavailableView("Select a studio run", systemImage: "play.rectangle.on.rectangle")
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
@@ -349,6 +351,7 @@ struct ProvidersPanel: View {
                 ContentUnavailableView("Select a profile", systemImage: "cpu")
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onChange(of: selectedId) { _, id in
             draft = store.profiles.first { $0.id == id }
         }
@@ -425,7 +428,8 @@ struct SettingsPanel: View {
                 if let u = URL(string: urlText), u.scheme != nil { daemon.baseURL = u }
                 Task { await daemon.refresh() }
             }
-        }.padding()
+        }
+        .formStyle(.grouped)
     }
 }
 

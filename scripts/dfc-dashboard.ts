@@ -1529,7 +1529,7 @@ async function collectTasks(repoRoot: string): Promise<Array<Record<string, unkn
     return await withDbSerial(async (db, c) => {
       const tasks = await queryResult<Array<Record<string, unknown>>>(
         db,
-        `SELECT id, goal, status, tags, source_agent, created_at, updated_at, done_at FROM task
+        `SELECT id, goal, status, phase, tags, source_agent, created_at, updated_at, done_at FROM task
          WHERE repo_id = $repo ORDER BY created_at DESC LIMIT 30`,
         { repo: c.repoId },
       );
@@ -1541,6 +1541,8 @@ async function collectTasks(repoRoot: string): Promise<Array<Record<string, unkn
       return tasks.map((t) => ({
         ...t,
         id: String(t.id),
+        // Legacy rows carry `phase` instead of `status`; clients require status.
+        status: String(t.status ?? t.phase ?? "open"),
         blockers: blockers.filter((b) => b.task_goal && b.task_goal === t.goal),
       }));
     }, repoRoot);
