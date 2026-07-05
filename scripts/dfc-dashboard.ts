@@ -31,6 +31,8 @@ import {
   withDb,
 } from "../src/memory/surreal.js";
 import { embedChunks, gatherDbTargets, listEmbeddingModels, queryVectors, resolveEmbedConfig } from "../src/memory/vectors.js";
+import { detectRiskTerms, tokenize } from "../src/memory/scoring.js";
+import { StringRecordId, Table } from "surrealdb";
 
 // Short timeouts for an interactive dashboard (only if the user has not overridden).
 process.env.DFC_SURREAL_CONNECT_TIMEOUT_MS ??= "8000";
@@ -599,7 +601,7 @@ const PROVIDERS: Record<string, ProviderDef> = {
   codex: {
     cmd: "codex",
     models: ["gpt-5.5-codex", "gpt-5.5"],
-    efforts: ["low", "medium", "high"],
+    efforts: ["low", "medium", "high", "xhigh"],
     stream: "plain",
     buildArgs: (o) => [
       "exec",
@@ -610,7 +612,8 @@ const PROVIDERS: Record<string, ProviderDef> = {
   },
   grok: {
     cmd: "grok",
-    models: ["composer-2.5"],
+    // Ids from the live grok CLI model registry (~/.grok/models_cache.json).
+    models: ["grok-composer-2.5-fast", "grok-build"],
     efforts: [],
     stream: "plain",
     buildArgs: (o) => [
@@ -630,7 +633,8 @@ const PROVIDERS: Record<string, ProviderDef> = {
   },
   copilot: {
     cmd: "copilot",
-    models: ["default", "gpt-5.5"],
+    // Ids from `copilot help config` model list.
+    models: ["default", "gpt-5.5", "claude-sonnet-4.6", "claude-opus-4.8"],
     efforts: [],
     stream: "plain",
     buildArgs: (o) => [
@@ -1159,7 +1163,7 @@ async function collectTasks(repoRoot: string): Promise<Array<Record<string, unkn
     return await withDbSerial(async (db, c) => {
       const tasks = await queryResult<Array<Record<string, unknown>>>(
         db,
-        `SELECT goal, status, tags, source_agent, created_at, updated_at, done_at FROM task
+        `SELECT id, goal, status, tags, source_agent, created_at, updated_at, done_at FROM task
          WHERE repo_id = $repo ORDER BY created_at DESC LIMIT 30`,
         { repo: c.repoId },
       );
@@ -1170,11 +1174,56 @@ async function collectTasks(repoRoot: string): Promise<Array<Record<string, unkn
       );
       return tasks.map((t) => ({
         ...t,
+        id: String(t.id),
         blockers: blockers.filter((b) => b.task_goal && b.task_goal === t.goal),
       }));
     }, repoRoot);
   } catch {
     return [];
+  }
+}
+
+const TASK_STATUSES = new Set(["open", "in_progress", "blocked", "done"]);
+
+/** Create a task directly from the dashboard (no agent involved) — mirrors dfc:task add. */
+async function addTask(repoRoot: string, goal: string): Promise<Record<string, unknown>> {
+  if (!goal) return { error: "goal required" };
+  if (!memoryConfigured(repoRoot)) return { error: "dev-memory not configured" };
+  const now = new Date().toISOString();
+  try {
+    return await withDbSerial(async (db, c) => {
+      const doc = {
+        repo_id: c.repoId,
+        source_agent: "manual",
+        goal: goal.slice(0, 500),
+        status: "open",
+        tags: Array.from(new Set([...detectRiskTerms(goal), ...tokenize(goal).slice(0, 5)])),
+        created_at: now,
+        updated_at: now,
+      };
+      const created = await db.create(new Table("task")).content(doc);
+      const row = Array.isArray(created) ? created[0] : created;
+      return { id: String((row as { id?: unknown }).id ?? ""), goal: doc.goal };
+    }, repoRoot);
+  } catch (err) {
+    return { error: (err as Error).message };
+  }
+}
+
+async function setTaskStatus(repoRoot: string, id: string, status: string): Promise<Record<string, unknown>> {
+  if (!/^task:[-\w⟨⟩]+$/u.test(id)) return { error: "invalid task id" };
+  if (!TASK_STATUSES.has(status)) return { error: "invalid status" };
+  if (!memoryConfigured(repoRoot)) return { error: "dev-memory not configured" };
+  const now = new Date().toISOString();
+  try {
+    return await withDbSerial(async (db) => {
+      const patch: Record<string, unknown> = { status, updated_at: now };
+      if (status === "done") patch.done_at = now;
+      await queryResult(db, "UPDATE $th MERGE $patch", { th: new StringRecordId(id), patch });
+      return { id, status };
+    }, repoRoot);
+  } catch (err) {
+    return { error: (err as Error).message };
   }
 }
 
@@ -1602,6 +1651,16 @@ async function main(): Promise<void> {
         } catch (err) {
           sendJson(res, 400, { error: (err as Error).message });
         }
+      } else if (url.pathname === "/api/tasks/add" && req.method === "POST") {
+        const body = JSON.parse((await readBody(req)) || "{}") as { goal?: string };
+        const result = await addTask(repoRoot, String(body.goal ?? "").trim());
+        tasksCache = undefined;
+        sendJson(res, result.error ? 400 : 200, result);
+      } else if (url.pathname === "/api/tasks/status" && req.method === "POST") {
+        const body = JSON.parse((await readBody(req)) || "{}") as { id?: string; status?: string };
+        const result = await setTaskStatus(repoRoot, String(body.id ?? ""), String(body.status ?? ""));
+        tasksCache = undefined;
+        sendJson(res, result.error ? 400 : 200, result);
       } else if (url.pathname === "/api/vectors" && req.method === "GET") {
         sendJson(res, 200, await collectVectors(repoRoot));
       } else if (url.pathname === "/api/vectors/embed" && req.method === "POST") {

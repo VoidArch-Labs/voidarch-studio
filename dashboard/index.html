@@ -54,15 +54,18 @@
           <label>Main agent
             <select id="agent-preset">
               <option value="">custom…</option>
-              <option value="claude|fable|medium|">Claude Fable 5 · medium (main)</option>
-              <option value="claude|sonnet|medium|">Claude Sonnet · medium (routine)</option>
-              <option value="claude|haiku|low|verify">Claude Haiku · testing/verify (enforced)</option>
-              <option value="codex|gpt-5.5-codex|high|">Codex GPT-5.5-codex · high</option>
-              <option value="codex|gpt-5.5|medium|">Codex GPT-5.5 · medium</option>
-              <option value="gemini|gemini-3.1-pro||">Gemini Pro 3.1</option>
-              <option value="gemini|gemini-3.5-flash||">Gemini Flash 3.5</option>
-              <option value="grok|composer-2.5||">Grok Composer 2.5</option>
-              <option value="copilot|default||">Copilot</option>
+              <option value="claude|fable|">Claude Fable 5</option>
+              <option value="claude|opus|">Claude Opus</option>
+              <option value="claude|sonnet|">Claude Sonnet</option>
+              <option value="claude|haiku|verify">Claude Haiku (testing — enforced)</option>
+              <option value="codex|gpt-5.5-codex|">Codex GPT-5.5-Codex</option>
+              <option value="codex|gpt-5.5|">Codex GPT-5.5</option>
+              <option value="gemini|gemini-3.5-flash|">Gemini 3.5 Flash</option>
+              <option value="gemini|gemini-3.1-pro|">Gemini 3.1 Pro</option>
+              <option value="grok|grok-composer-2.5-fast|">Grok Composer 2.5 Fast</option>
+              <option value="grok|grok-build|">Grok Build</option>
+              <option value="copilot|gpt-5.5|">Copilot GPT-5.5</option>
+              <option value="copilot|claude-sonnet-4.6|">Copilot Claude Sonnet 4.6</option>
             </select>
           </label>
           <label>Provider
@@ -175,6 +178,7 @@
         <canvas id="graph-canvas"></canvas>
         <div id="graph-card" class="graph-card" hidden></div>
       </div>
+      <div id="graph-explain" hidden></div>
     </div>
   </details>
 

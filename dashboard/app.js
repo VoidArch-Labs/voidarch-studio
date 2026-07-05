@@ -342,11 +342,10 @@ function initPickers() {
   $('agent-preset').onchange = () => {
     const v = $('agent-preset').value;
     if (!v) { launchPurpose = ''; updateToolControls(); return; }
-    const [prov, model, effort, purpose] = v.split('|');
+    const [prov, model, purpose] = v.split('|');
     if (state.config.providers[prov]) $('agent-provider').value = prov;
     fillModelEffort();
     if (model) $('agent-model').value = model;
-    if (effort) $('agent-effort').value = effort;
     launchPurpose = purpose || '';
     updateToolControls();
   };
@@ -1046,6 +1045,81 @@ function selectSystem(s) {
   drawSystems();
 }
 
+// ---- "how this repo works" — generated architecture narrative --------------------
+
+function renderSystemsExplain() {
+  const el = $('graph-explain');
+  if (graph.mode !== 'systems' || !graph.nodes.length) { el.hidden = true; return; }
+  el.hidden = false;
+  const { systems } = buildSystems();
+
+  // Directed cross-system dependency weights → role per system.
+  const dir = new Map(); // community → {in, out}
+  const get = (c) => { if (!dir.has(c)) dir.set(c, { in: 0, out: 0 }); return dir.get(c); };
+  for (const l of graph.links) {
+    if (l.s.community === l.t.community) continue;
+    get(l.s.community).out++;
+    get(l.t.community).in++;
+  }
+  const roleOf = (s) => {
+    const d = dir.get(s.c) || { in: 0, out: 0 };
+    if (d.in >= d.out * 2 && d.in > 3) return ['foundation', 'shared library — ' + d.in + ' inbound dependencies from other systems'];
+    if (d.out >= d.in * 2 && d.out > 3) return ['entry layer', 'orchestrator — drives ' + d.out + ' dependencies into other systems'];
+    return ['module', 'domain module (' + d.in + ' in / ' + d.out + ' out cross-system edges)'];
+  };
+
+  // Entry points: script/hook files, ranked by connectivity.
+  const entries = graph.nodes
+    .filter((n) => /^(scripts|hooks)\//.test(n.file) && n.label.includes('.'))
+    .sort((a, b) => b.deg - a.deg).slice(0, 6);
+
+  // Runtime flow chains: follow each entry's strongest outbound edges a few hops.
+  const chainOf = (start) => {
+    const seen = new Set([start.id]);
+    const parts = [start];
+    let cur = start;
+    for (let hop = 0; hop < 3; hop++) {
+      const outs = (graph.adj.get(cur.id) || []).filter((l) => l.s.id === cur.id && !seen.has(l.t.id));
+      if (!outs.length) break;
+      const next = outs.sort((a, b) => b.t.deg - a.t.deg)[0].t;
+      seen.add(next.id);
+      parts.push(next);
+      cur = next;
+    }
+    return parts;
+  };
+
+  const sysRows = systems.slice(0, 10).map((s) => {
+    const [tag, desc] = roleOf(s);
+    const files = [...new Set(s.nodes.map((n) => n.file).filter(Boolean))].slice(0, 4);
+    return '<tr><td><span style="color:' + commColor(s.c, 0.95) + '">●</span> <b class="sys-link" data-sys="' + esc(s.c) + '">' + esc(s.hub.label) + '</b></td>' +
+      '<td><span class="pill ' + (tag === 'foundation' ? 'done' : tag === 'entry layer' ? 'running' : 'off') + '">' + tag.toUpperCase() + '</span></td>' +
+      '<td>' + esc(desc) + '</td>' +
+      '<td class="mono dim">' + files.map(esc).join('<br>') + (s.files > 4 ? '<br>+' + (s.files - 4) + ' more' : '') + '</td></tr>';
+  }).join('');
+
+  const flows = entries.slice(0, 5).map((e) => {
+    const parts = chainOf(e);
+    if (parts.length < 2) return '';
+    return '<div class="flow-chain">' + parts.map((n, i) =>
+      (i ? ' <span class="dim">→</span> ' : '') +
+      '<span class="node-chip" data-node="' + esc(n.id) + '" title="' + esc(n.file) + '">' + esc(n.label.slice(0, 28)) + '</span>').join('') + '</div>';
+  }).filter(Boolean).join('');
+
+  el.innerHTML =
+    '<div class="card" style="margin-top:10px"><h3>How this repo works</h3>' +
+    '<table><tr><th>system</th><th>role</th><th>what it does in the graph</th><th>key files</th></tr>' + sysRows + '</table>' +
+    (flows ? '<h3 style="margin-top:12px">Runtime paths (entry point → strongest dependencies)</h3>' + flows : '') +
+    '<div class="dim" style="margin-top:6px">Derived from the dependency graph: a system is a graphify community; roles come from cross-system edge direction. Click any name to inspect.</div></div>';
+  for (const chip of el.querySelectorAll('.node-chip')) {
+    chip.onclick = () => { const n = graph.byId.get(chip.dataset.node); if (n) selectNode(n); };
+  }
+  const { index } = buildSystems();
+  for (const link of el.querySelectorAll('.sys-link')) {
+    link.onclick = () => { const s = index.get(link.dataset.sys); if (s) selectSystem(s); };
+  }
+}
+
 function setGraphView(view) {
   graph.mode = view;
   graph.selected = null;
@@ -1054,6 +1128,7 @@ function setGraphView(view) {
   $('graph-view-visual').classList.toggle('active', view === 'visual');
   $('graph-view-systems').classList.toggle('active', view === 'systems');
   drawGraph();
+  renderSystemsExplain();
 }
 
 function setupGraphCanvas() {
@@ -1164,15 +1239,43 @@ async function askAssistant(q) {
 
 // ---- tasks (expandable todos) ----------------------------------------------------------
 
+async function addTaskFromUi() {
+  const inp = $('task-new');
+  const goal = inp.value.trim();
+  if (!goal) return;
+  $('task-add').disabled = true;
+  const data = await (await fetch('/api/tasks/add', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ goal }),
+  })).json();
+  $('task-add').disabled = false;
+  if (data.error) { $('task-add-msg').textContent = data.error; return; }
+  inp.value = '';
+  $('task-add-msg').textContent = 'added ✓';
+  loadState(true);
+}
+
+async function setTaskStatusUi(id, status) {
+  await fetch('/api/tasks/status', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, status }),
+  });
+  loadState(true);
+}
+
 function renderTasks() {
+  if (editingIn($('p-tasks'))) return; // don't clobber a goal being typed
   const tasks = state.tasks || [];
+  const addRow =
+    '<div class="card"><div class="launch-row">' +
+    '<input id="task-new" placeholder="New task goal — added straight to dev-memory, no agent involved" style="flex:1">' +
+    '<button id="task-add" class="glow-btn">Add ▸</button><span id="task-add-msg" class="dim"></span></div></div>';
   if (!tasks.length) {
-    $('p-tasks').innerHTML = '<div class="dim">No tasks in dev-memory. Create one with <span class="mono">pnpm dfc:task add "goal"</span> or via a hooked session — they appear here as expandable todos.</div>';
+    $('p-tasks').innerHTML = addRow + '<div class="dim">No tasks in dev-memory yet — add one above or via <span class="mono">pnpm dfc:task add</span>.</div>';
     $('tasks-hint').textContent = '0';
+    wireTaskAdd();
     return;
   }
   const statusPill = (s) => pill(s === 'done' ? 'ok' : s === 'blocked' ? 'fail' : s === 'in_progress' ? 'running' : 'warn').replace('>OK<', '>DONE<').replace('>WARN<', '>OPEN<').replace('>RUNNING<', '>IN PROGRESS<').replace('>FAIL<', '>BLOCKED<');
-  $('p-tasks').innerHTML = tasks.map((t, i) => {
+  $('p-tasks').innerHTML = addRow + tasks.map((t, i) => {
     const key = 'task-' + i;
     const runs = (state.spawned_agents || []).filter((a) => a.prompt && a.prompt.includes(t.goal)).slice(0, 3);
     const ref = 'task:' + t.goal;
@@ -1191,15 +1294,32 @@ function renderTasks() {
         ? '<div style="margin-top:6px"><span class="dim">related runs:</span>' + runs.map((r) =>
             '<div>' + pill(r.status) + ' <span class="mono">' + esc(r.id.slice(11, 23)) + '</span> ' + esc([r.provider, r.model].filter(Boolean).join('/')) + '</div>').join('') + '</div>'
         : '') +
-      refActions(ref) +
+      '<div class="card-actions">' +
+      (t.id && t.status !== 'in_progress' && t.status !== 'done'
+        ? '<button class="mini-btn" data-tstatus="in_progress" data-tid="' + esc(t.id) + '">start</button>' : '') +
+      (t.id && t.status !== 'done'
+        ? '<button class="mini-btn" data-tstatus="done" data-tid="' + esc(t.id) + '">mark done</button>' : '') +
+      (t.id && t.status === 'done'
+        ? '<button class="mini-btn" data-tstatus="open" data-tid="' + esc(t.id) + '">reopen</button>' : '') +
+      '<button class="mini-btn" data-copy="' + esc(ref) + '">copy ref</button>' +
+      '<button class="mini-btn" data-delegate="' + esc(ref) + '">delegate ▸</button></div>' +
       '</div></details>';
   }).join('');
   for (const d of $('p-tasks').querySelectorAll('.task-card')) {
     d.ontoggle = () => { if (d.open) ui.openTasks.add(d.dataset.task); else ui.openTasks.delete(d.dataset.task); };
   }
+  for (const b of $('p-tasks').querySelectorAll('[data-tstatus]')) {
+    b.onclick = () => { b.disabled = true; setTaskStatusUi(b.dataset.tid, b.dataset.tstatus); };
+  }
   wireRefActions($('p-tasks'));
+  wireTaskAdd();
   const open = tasks.filter((t) => t.status !== 'done').length;
   $('tasks-hint').textContent = open + ' open · ' + tasks.length + ' total';
+}
+
+function wireTaskAdd() {
+  $('task-add').onclick = addTaskFromUi;
+  $('task-new').onkeydown = (e) => { if (e.key === 'Enter') addTaskFromUi(); };
 }
 
 // ---- vectors ----------------------------------------------------------------------------
