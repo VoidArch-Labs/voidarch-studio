@@ -171,18 +171,156 @@ struct WorktreesPanel: View {
 
 struct RunsPanel: View {
     @EnvironmentObject var daemon: DaemonClient
+    @State private var selectedRunId: String?
+
     var body: some View {
-        List(daemon.runs) { r in
-            VStack(alignment: .leading) {
-                Text([r.provider, r.model].compactMap { $0 }.joined(separator: " / "))
-                    .font(.headline)
-                Text(r.prompt ?? "").lineLimit(2).font(.caption)
-                HStack {
-                    Text(r.status).font(.caption2)
-                    if let c = r.cost_usd { Text(String(format: "$%.4f", c)).font(.caption2) }
-                    if let n = r.num_turns { Text("\(n) turns").font(.caption2) }
-                }.foregroundStyle(.secondary)
+        HSplitView {
+            List(selection: $selectedRunId) {
+                Section("Studio runs") {
+                    ForEach(daemon.studioRuns) { r in
+                        VStack(alignment: .leading) {
+                            Text("\(r.provider) · \(r.status)").font(.headline)
+                            Text("task \(r.taskId) · \(r.startedAt)")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        .tag(r.id)
+                    }
+                }
+                Section("Headless agents") {
+                    ForEach(daemon.runs) { r in
+                        VStack(alignment: .leading) {
+                            Text([r.provider, r.model].compactMap { $0 }.joined(separator: " / ")).font(.headline)
+                            Text(r.status).font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                }
             }
+            .frame(minWidth: 280)
+            if let run = daemon.studioRuns.first(where: { $0.id == selectedRunId }) {
+                RunDetailView(run: run)
+            } else {
+                ContentUnavailableView("Select a studio run", systemImage: "play.rectangle.on.rectangle")
+            }
+        }
+    }
+}
+
+/// Post-run review (#27): transcript tail, changed files + diff, task status, cleanup.
+struct RunDetailView: View {
+    @EnvironmentObject var daemon: DaemonClient
+    let run: StudioRun
+    @State private var diff: WorktreeDiff?
+
+    private var transcriptTail: String {
+        guard let text = try? String(contentsOfFile: run.transcriptPath, encoding: .utf8) else {
+            return "(no transcript at \(run.transcriptPath))"
+        }
+        return text.split(separator: "\n").suffix(40).joined(separator: "\n")
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("\(run.provider) · \(run.status) · exit \(run.exitCode.map(String.init) ?? "—")")
+                    .font(.headline)
+                if let hash = run.promptHash {
+                    Text("prompt \(run.promptProfileId ?? "?") #\(String(hash.prefix(12)))")
+                        .font(.caption.monospaced()).foregroundStyle(.secondary)
+                }
+                GroupBox("Transcript (tail)") {
+                    Text(transcriptTail)
+                        .font(.caption.monospaced()).textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                GroupBox("Changed files") {
+                    if run.changedFiles.isEmpty {
+                        Text("none").foregroundStyle(.secondary)
+                    } else {
+                        ForEach(run.changedFiles, id: \.self) { Text($0).font(.caption.monospaced()) }
+                    }
+                }
+                if let diff, !diff.diff.isEmpty {
+                    GroupBox("Diff") {
+                        Text(diff.diff)
+                            .font(.caption.monospaced()).textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+                HStack {
+                    Text("Mark task:")
+                    ForEach(["done", "blocked", "failed"], id: \.self) { s in
+                        Button(s) { Task { await daemon.setTaskStatus(id: run.taskId, status: s) } }
+                    }
+                    Spacer()
+                    if let wt = run.worktreeId {
+                        Button("Clean up worktree", role: .destructive) {
+                            Task { _ = await daemon.deleteWorktree(id: wt, force: true) }
+                        }
+                    }
+                }
+            }
+            .padding()
+        }
+        .task(id: run.id) {
+            diff = nil
+            if let wt = run.worktreeId { diff = await daemon.worktreeDiff(id: wt) }
+        }
+    }
+}
+
+/// Native context-pack builder (#27). The old WKWebView "/nox" embed pointed at the
+/// standalone nox page server, which the daemon does not serve — native replaces it
+/// against the daemon's /api/context.
+struct ContextPackPanel: View {
+    @EnvironmentObject var daemon: DaemonClient
+    @State private var taskText = ""
+    @State private var pack: ContextPack?
+    @State private var loading = false
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                TextField("Task to build context for", text: $taskText)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit { generate() }
+                Button("Generate") { generate() }
+                    .disabled(taskText.trimmingCharacters(in: .whitespaces).isEmpty || loading)
+                if let pack {
+                    Button(daemon.attachedContextPack?.task == pack.task ? "Attached ✓" : "Attach to next launch") {
+                        daemon.attachedContextPack = pack
+                    }
+                }
+            }
+            .padding()
+            if loading { ProgressView().padding() }
+            if let pack {
+                HStack {
+                    Text("~\(pack.token_estimate ?? 0) tokens (budget \(pack.target_tokens ?? 0))")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                }
+                .padding(.horizontal)
+                ScrollView {
+                    Text(pack.markdown)
+                        .font(.caption.monospaced()).textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding()
+                }
+            } else if !loading {
+                ContentUnavailableView("Generate a context pack", systemImage: "doc.text.magnifyingglass",
+                                       description: Text("Built by Nox Memory via the daemon /api/context endpoint. Attach it to inject as {contextPack} on the next terminal launch."))
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func generate() {
+        let task = taskText.trimmingCharacters(in: .whitespaces)
+        guard !task.isEmpty else { return }
+        loading = true
+        Task {
+            pack = await daemon.generateContext(task: task)
+            loading = false
         }
     }
 }

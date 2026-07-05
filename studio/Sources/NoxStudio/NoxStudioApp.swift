@@ -48,8 +48,8 @@ enum Panel: String, CaseIterable, Identifiable {
     /// daemon's existing dashboard views for memory/context/repo inspection.
     var isNative: Bool {
         switch self {
-        case .tasks, .worktrees, .terminal, .runs, .dashboard, .settings, .providers: true
-        case .repos, .contextPack: false
+        case .tasks, .worktrees, .terminal, .runs, .dashboard, .settings, .providers, .contextPack: true
+        case .repos: false
         }
     }
 }
@@ -69,7 +69,7 @@ struct RootView: View {
             case .dashboard: DashboardPanel()
             case .repos: WebPanel(path: "/#memory")          // daemon dashboard view
             case .tasks: TasksPanel()
-            case .contextPack: WebPanel(path: "/nox")        // Nox Memory page (context builder)
+            case .contextPack: ContextPackPanel()            // native, daemon /api/context
             case .worktrees: WorktreesPanel()
             case .terminal: TerminalPanel()
             case .runs: RunsPanel()

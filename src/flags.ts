@@ -139,7 +139,7 @@ export const FLAGS: FeatureFlag[] = [
   {
     id: "studio.contextPackPreview",
     owner: "studio",
-    status: "planned",
+    status: "scaffolded",
     defaultEnabled: false,
     requiresApproval: false,
     description: "Context-pack preview, scoring, and feedback loop panel (issue #16).",
