@@ -7,8 +7,8 @@
 
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
-import { parseArgs, repoRootFromArgs } from "../src/memory/cli.js";
-import { REPO_ROOT, isEmbeddedUrl, parseEnvFile } from "../src/memory/surreal.js";
+import { parseArgs, repoRootFromArgs } from "nox-memory/cli";
+import { REPO_ROOT, isEmbeddedUrl, parseEnvFile } from "nox-memory/surreal";
 
 const GITIGNORE_LINES = [
   ".dfc/*.env",

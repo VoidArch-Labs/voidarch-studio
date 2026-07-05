@@ -3,7 +3,7 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { parseArgs, repoRootFromArgs } from "../src/memory/cli.js";
+import { parseArgs, repoRootFromArgs } from "../src/cli.js";
 import {
   assertUsableConfig,
   authenticate,
@@ -11,8 +11,8 @@ import {
   isEmbeddedUrl,
   loadConfig,
   queryResults,
-  REPO_ROOT,
-} from "../src/memory/surreal.js";
+  PKG_ROOT,
+} from "../src/surreal.js";
 
 const MIGRATIONS = [
   "schema/0001_core.surql",
@@ -51,7 +51,7 @@ async function main(): Promise<void> {
     await db.use({ namespace: cfg.namespace, database: cfg.database });
 
     for (const rel of MIGRATIONS) {
-      const surql = readFileSync(join(REPO_ROOT, rel), "utf8");
+      const surql = readFileSync(join(PKG_ROOT, rel), "utf8");
       try {
         await queryResults(db, surql);
         console.log(`applied: ${rel}`);

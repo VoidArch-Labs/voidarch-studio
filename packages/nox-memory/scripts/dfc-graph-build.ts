@@ -12,8 +12,8 @@ import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { parseArgs, repoRootFromArgs } from "../src/memory/cli.js";
-import { loadConfig } from "../src/memory/surreal.js";
+import { parseArgs, repoRootFromArgs } from "../src/cli.js";
+import { loadConfig } from "../src/surreal.js";
 
 const DEV_BUILD = join(homedir(), "Dev", "graphify-surreal", "target", "release", "graphify-surreal");
 

@@ -5,11 +5,11 @@
 //   pnpm dfc:blocker get|delete --id blocker:abc
 
 import { RecordId, StringRecordId, Table } from "surrealdb";
-import { normalizeSourceAgent } from "../src/memory/agents.js";
-import { parseArgs, positiveIntArg, repoRootFromArgs } from "../src/memory/cli.js";
-import { queryResult, withDb } from "../src/memory/surreal.js";
-import { detectRiskTerms, tokenize } from "../src/memory/scoring.js";
-import type { BlockerRecord } from "../src/memory/types.js";
+import { normalizeSourceAgent } from "../src/agents.js";
+import { parseArgs, positiveIntArg, repoRootFromArgs } from "../src/cli.js";
+import { queryResult, withDb } from "../src/surreal.js";
+import { detectRiskTerms, tokenize } from "../src/scoring.js";
+import type { BlockerRecord } from "../src/types.js";
 
 const SUBCOMMANDS = new Set(["add", "list", "resolve", "get", "delete"]);
 

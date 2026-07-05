@@ -4,9 +4,9 @@
 //   pnpm dfc:graph:status             # latest persisted snapshot from SurrealDB
 //   pnpm dfc:graph:status --json      # machine output
 
-import { graphStatusDb, graphStatusLocal, type GraphStatus } from "../src/memory/graph.js";
-import { parseArgs, repoRootFromArgs } from "../src/memory/cli.js";
-import { loadConfig, withDb } from "../src/memory/surreal.js";
+import { graphStatusDb, graphStatusLocal, type GraphStatus } from "../src/graph.js";
+import { parseArgs, repoRootFromArgs } from "../src/cli.js";
+import { loadConfig, withDb } from "../src/surreal.js";
 
 function printStatus(s: GraphStatus, dryRun: boolean): void {
   console.log(`dfc:graph:status ${dryRun ? "(DRY RUN — local graph.json)" : "(SurrealDB snapshot)"}`);

@@ -1,7 +1,7 @@
 // dfc:status - connect and report per-table row counts. Human-readable.
 
-import { parseArgs, repoRootFromArgs } from "../src/memory/cli.js";
-import { queryResult, withDb } from "../src/memory/surreal.js";
+import { parseArgs, repoRootFromArgs } from "../src/cli.js";
+import { queryResult, withDb } from "../src/surreal.js";
 import type { Surreal } from "surrealdb";
 
 const COUNT_TABLES = {

@@ -9,15 +9,15 @@
 // paid path (openai) is NEVER called unless DFC_EMBED_PROVIDER=openai,
 // OPENAI_API_KEY is present, and approval is explicit.
 
-import { normalizeSourceAgent } from "../src/memory/agents.js";
-import { parseArgs, repoRootFromArgs } from "../src/memory/cli.js";
-import { loadConfig, withDb } from "../src/memory/surreal.js";
+import { normalizeSourceAgent } from "../src/agents.js";
+import { parseArgs, repoRootFromArgs } from "../src/cli.js";
+import { loadConfig, withDb } from "../src/surreal.js";
 import {
   embedChunks,
   gatherDbTargets,
   gatherLocalTargets,
   resolveEmbedConfig,
-} from "../src/memory/vectors.js";
+} from "../src/vectors.js";
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));

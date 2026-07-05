@@ -8,11 +8,11 @@
 
 import { readFileSync } from "node:fs";
 import { RecordId, StringRecordId, Table } from "surrealdb";
-import { normalizeSourceAgent } from "../src/memory/agents.js";
-import { parseArgs, positiveIntArg, repoRootFromArgs, type CliArgs } from "../src/memory/cli.js";
-import { queryResult, withDb } from "../src/memory/surreal.js";
-import { detectRiskTerms, tokenize } from "../src/memory/scoring.js";
-import type { MemoryRecord } from "../src/memory/types.js";
+import { normalizeSourceAgent } from "../src/agents.js";
+import { parseArgs, positiveIntArg, repoRootFromArgs, type CliArgs } from "../src/cli.js";
+import { queryResult, withDb } from "../src/surreal.js";
+import { detectRiskTerms, tokenize } from "../src/scoring.js";
+import type { MemoryRecord } from "../src/types.js";
 
 const KIND_TABLES: Record<string, string> = {
   decision: "decision",

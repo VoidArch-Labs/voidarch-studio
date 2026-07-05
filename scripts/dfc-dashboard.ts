@@ -19,8 +19,8 @@ import { homedir } from "node:os";
 import { createServer } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { basename, dirname, extname, join, normalize } from "node:path";
-import { parseArgs, repoRootFromArgs } from "../src/memory/cli.js";
-import { type DfcMetrics, collectMetrics } from "../src/memory/metrics.js";
+import { parseArgs, repoRootFromArgs } from "nox-memory/cli";
+import { type DfcMetrics, collectMetrics } from "nox-memory/metrics";
 import {
   REPO_ROOT,
   embeddedDataDir,
@@ -29,9 +29,9 @@ import {
   parseEnvFile,
   queryResult,
   withDb,
-} from "../src/memory/surreal.js";
-import { embedChunks, gatherDbTargets, listEmbeddingModels, queryVectors, resolveEmbedConfig } from "../src/memory/vectors.js";
-import { detectRiskTerms, tokenize } from "../src/memory/scoring.js";
+} from "nox-memory/surreal";
+import { embedChunks, gatherDbTargets, listEmbeddingModels, queryVectors, resolveEmbedConfig } from "nox-memory/vectors";
+import { detectRiskTerms, tokenize } from "nox-memory/scoring";
 import { StringRecordId, Table } from "surrealdb";
 
 // Short timeouts for an interactive dashboard (only if the user has not overridden).

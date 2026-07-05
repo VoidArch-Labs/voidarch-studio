@@ -8,18 +8,18 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { extname, join } from "node:path";
 import type { Surreal } from "surrealdb";
-import { parseArgs, repoRootFromArgs } from "../src/memory/cli.js";
-import { buildContextPack } from "../src/memory/context-pack.js";
-import { queryDocChunks } from "../src/memory/docs.js";
-import { tokenize } from "../src/memory/scoring.js";
-import { loadConfig, queryResult, REPO_ROOT, withDb } from "../src/memory/surreal.js";
-import { listEmbeddingModels, resolveEmbedConfig } from "../src/memory/vectors.js";
+import { parseArgs, repoRootFromArgs } from "../src/cli.js";
+import { buildContextPack } from "../src/context-pack.js";
+import { queryDocChunks } from "../src/docs.js";
+import { tokenize } from "../src/scoring.js";
+import { loadConfig, queryResult, PKG_ROOT, withDb } from "../src/surreal.js";
+import { listEmbeddingModels, resolveEmbedConfig } from "../src/vectors.js";
 
 process.env.DFC_SURREAL_CONNECT_TIMEOUT_MS ??= "8000";
 process.env.DFC_SURREAL_CONNECT_ATTEMPTS ??= "1";
 process.env.DFC_SURREAL_QUERY_TIMEOUT_MS ??= "15000";
 
-const ASSET_DIR = join(REPO_ROOT, "nox");
+const ASSET_DIR = join(PKG_ROOT, "page");
 const COUNT_TABLES = [
   "file",
   "document",

@@ -1,7 +1,7 @@
 // dfc:db:check - load config, connect, authenticate, select ns/db, run a tiny
 // read query, and print the connection status. Human-readable output.
 
-import { parseArgs, repoRootFromArgs } from "../src/memory/cli.js";
+import { parseArgs, repoRootFromArgs } from "../src/cli.js";
 import {
   assertUsableConfig,
   connect,
@@ -9,7 +9,7 @@ import {
   isEmbeddedUrl,
   loadConfig,
   queryResult,
-} from "../src/memory/surreal.js";
+} from "../src/surreal.js";
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));

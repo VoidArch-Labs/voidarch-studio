@@ -8,9 +8,9 @@
 // with no SurrealDB credentials it reports "not configured" and exits 0.
 
 import type { Surreal } from "surrealdb";
-import { parseArgs, repoRootFromArgs } from "../src/memory/cli.js";
-import { assertUsableConfig, connect, loadConfig } from "../src/memory/surreal.js";
-import { findGcCandidates, runGc } from "../src/memory/vectors.js";
+import { parseArgs, repoRootFromArgs } from "../src/cli.js";
+import { assertUsableConfig, connect, loadConfig } from "../src/surreal.js";
+import { findGcCandidates, runGc } from "../src/vectors.js";
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));

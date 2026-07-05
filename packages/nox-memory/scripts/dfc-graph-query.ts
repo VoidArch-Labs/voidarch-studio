@@ -12,10 +12,10 @@ import {
   queryGraph,
   queryGraphLocal,
   type GraphQueryResult,
-} from "../src/memory/graph.js";
-import { normalizeSourceAgent } from "../src/memory/agents.js";
-import { parseArgs, repoRootFromArgs } from "../src/memory/cli.js";
-import { loadConfig, withDb } from "../src/memory/surreal.js";
+} from "../src/graph.js";
+import { normalizeSourceAgent } from "../src/agents.js";
+import { parseArgs, repoRootFromArgs } from "../src/cli.js";
+import { loadConfig, withDb } from "../src/surreal.js";
 
 function printResult(r: GraphQueryResult, dryRun: boolean): void {
   console.log(`dfc:graph:query ${dryRun ? "(DRY RUN — local graph.json)" : "(SurrealDB)"}`);

@@ -7,9 +7,9 @@
 // SurrealDB credentials, and never exits non-zero just because the DB is unset.
 
 import type { Surreal } from "surrealdb";
-import { parseArgs, repoRootFromArgs } from "../src/memory/cli.js";
-import { buildDocPlan } from "../src/memory/docs.js";
-import { graphStatusLocal } from "../src/memory/graph.js";
+import { parseArgs, repoRootFromArgs } from "../src/cli.js";
+import { buildDocPlan } from "../src/docs.js";
+import { graphStatusLocal } from "../src/graph.js";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -18,13 +18,13 @@ import {
   embeddedDataDir,
   isEmbeddedUrl,
   loadConfig,
-} from "../src/memory/surreal.js";
+} from "../src/surreal.js";
 import {
   countRows,
   findGcCandidates,
   listEmbeddingModels,
   resolveEmbedConfig,
-} from "../src/memory/vectors.js";
+} from "../src/vectors.js";
 
 const DB_TABLES = [
   "file", "document", "doc_chunk", "decision", "evidence_item",

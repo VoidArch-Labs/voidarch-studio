@@ -8,7 +8,6 @@ import { fileURLToPath } from "node:url";
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 
 const tsCommands = new Map([
-  ["init", "scripts/dfc-init.ts"],
   ["ingest", "scripts/dfc-ingest-repo.ts"],
   ["context", "scripts/dfc-context-pack.ts"],
   ["status", "scripts/dfc-status.ts"],
@@ -19,7 +18,6 @@ const tsCommands = new Map([
   ["metrics", "scripts/dfc-metrics.ts"],
   ["sync", "scripts/dfc-sync.ts"],
   ["embed", "scripts/dfc-embed.ts"],
-  ["flags", "scripts/dfc-flags.ts"],
   ["page", "scripts/dfc-nox.ts"],
   ["docs:ingest", "scripts/dfc-docs-ingest.ts"],
   ["docs:query", "scripts/dfc-docs-query.ts"],
@@ -47,7 +45,6 @@ Usage:
   nox <group> <subcommand> [options]
 
 Core:
-  init
   ingest
   context
   status
@@ -70,7 +67,6 @@ Ops:
   db <check|migrate>
   metrics [--days <n>] [--json]
   sync
-  flags
 
 Compatibility:
   pnpm dfc:* scripts remain available.

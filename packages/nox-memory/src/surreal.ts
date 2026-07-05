@@ -18,8 +18,16 @@ export const DEFAULT_EMBEDDED_URL = "surrealkv://.dfc/dev-memory";
 const DEFAULT_QUERY_TIMEOUT_MS = 120_000;
 const DEFAULT_CONNECT_ATTEMPTS = 3;
 
-/** Repo root = two levels up from src/memory/ (resolved from this file, not cwd). */
-export const REPO_ROOT = resolve(moduleDir, "..", "..");
+/**
+ * Plugin root (where .dfc/, hooks/, skills/, etc. live) — three levels up from
+ * packages/nox-memory/src/ (resolved from this file, not cwd). Kept as REPO_ROOT
+ * for compat: callers outside this package (dfc-init.ts, dfc-dashboard.ts,
+ * dfc-grok-build.ts) rely on it resolving to the plugin root, not this package.
+ */
+export const REPO_ROOT = resolve(moduleDir, "..", "..", "..");
+
+/** This package's own root (packages/nox-memory) — for schema/ and other package-local assets. */
+export const PKG_ROOT = resolve(moduleDir, "..");
 
 export interface ConfigOptions {
   repoRoot?: string;

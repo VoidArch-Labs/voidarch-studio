@@ -9,8 +9,8 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { normalizeSourceAgent } from "../src/memory/agents.js";
-import { parseArgs, repoRootFromArgs } from "../src/memory/cli.js";
+import { normalizeSourceAgent } from "../src/agents.js";
+import { parseArgs, repoRootFromArgs } from "../src/cli.js";
 
 function main(): void {
   const args = parseArgs(process.argv.slice(2));

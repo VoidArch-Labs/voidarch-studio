@@ -8,10 +8,10 @@
 // graphify-out/ is gitignored and built locally with `/graphify` (or `graphify
 // update .`). If it is absent or stale vs HEAD, this reports it instead of failing.
 
-import { normalizeSourceAgent } from "../src/memory/agents.js";
-import { parseArgs, repoRootFromArgs } from "../src/memory/cli.js";
-import { buildGraphPlan, currentGitCommit, findGraphFile, importGraph, loadGraph } from "../src/memory/graph.js";
-import { loadConfig, withDb } from "../src/memory/surreal.js";
+import { normalizeSourceAgent } from "../src/agents.js";
+import { parseArgs, repoRootFromArgs } from "../src/cli.js";
+import { buildGraphPlan, currentGitCommit, findGraphFile, importGraph, loadGraph } from "../src/graph.js";
+import { loadConfig, withDb } from "../src/surreal.js";
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));

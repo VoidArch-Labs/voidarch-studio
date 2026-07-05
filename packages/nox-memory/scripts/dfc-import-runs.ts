@@ -14,10 +14,10 @@
 
 import { Table } from "surrealdb";
 import type { Surreal } from "surrealdb";
-import { normalizeSourceAgent } from "../src/memory/agents.js";
-import { parseArgs as parseCliArgs, repoRootFromArgs } from "../src/memory/cli.js";
-import { loadConfig, queryResult, withDb } from "../src/memory/surreal.js";
-import type { SourceAgent } from "../src/memory/types.js";
+import { normalizeSourceAgent } from "../src/agents.js";
+import { parseArgs as parseCliArgs, repoRootFromArgs } from "../src/cli.js";
+import { loadConfig, queryResult, withDb } from "../src/surreal.js";
+import type { SourceAgent } from "../src/types.js";
 import {
   type AgentRunRow,
   type ApprovalRow,
@@ -33,7 +33,7 @@ import {
   readToolLines,
   readVerification,
   sessionToolsPath,
-} from "../src/memory/runs.js";
+} from "../src/runs.js";
 
 interface Args {
   [key: string]: string | undefined;

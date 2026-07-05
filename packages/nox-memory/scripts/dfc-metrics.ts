@@ -2,9 +2,9 @@
 // summary by default; --json prints compact JSON only.
 //   pnpm dfc:metrics [--days 30] [--json]
 
-import { parseArgs, repoRootFromArgs } from "../src/memory/cli.js";
-import { collectMetrics, type DfcMetrics } from "../src/memory/metrics.js";
-import { withDb } from "../src/memory/surreal.js";
+import { parseArgs, repoRootFromArgs } from "../src/cli.js";
+import { collectMetrics, type DfcMetrics } from "../src/metrics.js";
+import { withDb } from "../src/surreal.js";
 
 function printCounts(indent: string, counts: Record<string, number>): void {
   const entries = Object.entries(counts);

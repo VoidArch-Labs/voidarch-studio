@@ -4,11 +4,11 @@
 // Full CRUD (list/search/update/delete) lives in dfc:memory.
 
 import { Table } from "surrealdb";
-import { normalizeSourceAgent } from "../src/memory/agents.js";
-import { parseArgs, repoRootFromArgs } from "../src/memory/cli.js";
-import { withDb } from "../src/memory/surreal.js";
-import { detectRiskTerms, tokenize } from "../src/memory/scoring.js";
-import type { MemoryRecord } from "../src/memory/types.js";
+import { normalizeSourceAgent } from "../src/agents.js";
+import { parseArgs, repoRootFromArgs } from "../src/cli.js";
+import { withDb } from "../src/surreal.js";
+import { detectRiskTerms, tokenize } from "../src/scoring.js";
+import type { MemoryRecord } from "../src/types.js";
 
 /** First sentence, capped at 140 chars. */
 function summarize(text: string): string {

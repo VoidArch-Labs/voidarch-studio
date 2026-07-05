@@ -3,10 +3,10 @@
 //   pnpm dfc:context --task "Add approval logging"
 
 import { Table } from "surrealdb";
-import { normalizeSourceAgent } from "../src/memory/agents.js";
-import { buildContextPack } from "../src/memory/context-pack.js";
-import { withDb } from "../src/memory/surreal.js";
-import { parseArgs, repoRootFromArgs } from "../src/memory/cli.js";
+import { normalizeSourceAgent } from "../src/agents.js";
+import { buildContextPack } from "../src/context-pack.js";
+import { withDb } from "../src/surreal.js";
+import { parseArgs, repoRootFromArgs } from "../src/cli.js";
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));

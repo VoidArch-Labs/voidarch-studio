@@ -1,9 +1,9 @@
 // dfc:ingest - scan repo text files and upsert them into SurrealDB.
 
-import { ingestRepo } from "../src/memory/ingest.js";
-import { withDb } from "../src/memory/surreal.js";
-import { normalizeSourceAgent } from "../src/memory/agents.js";
-import { parseArgs, positiveIntArg, repoRootFromArgs } from "../src/memory/cli.js";
+import { ingestRepo } from "../src/ingest.js";
+import { withDb } from "../src/surreal.js";
+import { normalizeSourceAgent } from "../src/agents.js";
+import { parseArgs, positiveIntArg, repoRootFromArgs } from "../src/cli.js";
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));

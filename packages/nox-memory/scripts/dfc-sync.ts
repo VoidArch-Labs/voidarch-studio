@@ -5,16 +5,16 @@
 // NOTE: SurrealKV holds a single-process LOCK — an embedded database (source or
 // target) must not be in use by another dfc command or dashboard while syncing.
 
-import { parseArgs, repoRootFromArgs } from "../src/memory/cli.js";
-import { upsertBatches, type UpsertBatchRow } from "../src/memory/batch.js";
+import { parseArgs, repoRootFromArgs } from "../src/cli.js";
+import { upsertBatches, type UpsertBatchRow } from "../src/batch.js";
 import {
   assertUsableConfig,
   connect,
   isEmbeddedUrl,
   loadConfig,
   queryResult,
-} from "../src/memory/surreal.js";
-import type { DfcConfig } from "../src/memory/types.js";
+} from "../src/surreal.js";
+import type { DfcConfig } from "../src/types.js";
 import { resolve } from "node:path";
 import type { RecordId } from "surrealdb";
 

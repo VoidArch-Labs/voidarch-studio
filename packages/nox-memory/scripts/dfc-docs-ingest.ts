@@ -8,10 +8,10 @@
 // Sources: README.md, AGENTS.md, docs/**, templates/**, skills/**/SKILL.md,
 // agents/*.md, .claude/skills/**/SKILL.md. Unchanged files are skipped on re-ingest.
 
-import { normalizeSourceAgent } from "../src/memory/agents.js";
-import { parseArgs, positiveIntArg, repoRootFromArgs } from "../src/memory/cli.js";
-import { buildDocPlan, ingestDocs } from "../src/memory/docs.js";
-import { loadConfig, withDb } from "../src/memory/surreal.js";
+import { normalizeSourceAgent } from "../src/agents.js";
+import { parseArgs, positiveIntArg, repoRootFromArgs } from "../src/cli.js";
+import { buildDocPlan, ingestDocs } from "../src/docs.js";
+import { loadConfig, withDb } from "../src/surreal.js";
 
 function printPlan(stats: ReturnType<typeof buildDocPlan>["stats"], dryRun: boolean): void {
   console.log(`dfc:docs:ingest ${dryRun ? "(DRY RUN — no writes)" : ""}`.trim());

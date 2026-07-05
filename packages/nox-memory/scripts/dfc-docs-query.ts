@@ -7,11 +7,11 @@
 // Dry-run chunks the repo in-memory and scores deterministically (no BM25, no DB),
 // so it works with no credentials. Live mode uses the doc_chunk BM25 full-text index.
 
-import { normalizeSourceAgent } from "../src/memory/agents.js";
-import { parseArgs, repoRootFromArgs } from "../src/memory/cli.js";
-import { queryDocChunks, queryDocChunksLocal } from "../src/memory/docs.js";
-import { loadConfig, withDb } from "../src/memory/surreal.js";
-import type { ContextDocChunkEntry } from "../src/memory/types.js";
+import { normalizeSourceAgent } from "../src/agents.js";
+import { parseArgs, repoRootFromArgs } from "../src/cli.js";
+import { queryDocChunks, queryDocChunksLocal } from "../src/docs.js";
+import { loadConfig, withDb } from "../src/surreal.js";
+import type { ContextDocChunkEntry } from "../src/types.js";
 
 function printResults(results: ContextDocChunkEntry[], dryRun: boolean): void {
   console.log(`dfc:docs:query ${dryRun ? "(DRY RUN — local chunking, no DB)" : "(SurrealDB BM25)"}`);
