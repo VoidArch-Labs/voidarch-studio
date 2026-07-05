@@ -1,7 +1,12 @@
 # Nox and Nox Studio — MVP Specification
 
-Status: adopted 2026-07-05. This is the canonical product-split document for the
-`dev-flow-control` repository. It supersedes the accidental draft that briefly lived on
+Status: **superseded 2026-07-05 by [`nox-memory-and-studio-mvp-v2.md`](nox-memory-and-studio-mvp-v2.md)**
+where the two disagree — v2 redefines the Studio MVP as a hybrid SwiftUI native app with
+worktrees + integrated terminal, and makes Nox Memory an installable npm package
+(workspace `packages/nox-memory`). The boundary rule, embedding/approval gates,
+subscription-first routing rule, and feature-flag registry below remain in force.
+
+Originally adopted 2026-07-05, superseding the accidental draft that briefly lived on
 the `docs/nox-mvp-fable-prompts` branch (recovered and adapted here).
 
 Two products are emerging from this repo:
