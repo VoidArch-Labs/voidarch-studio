@@ -25,6 +25,7 @@
     "./graph": "./src/graph.js",
     "./ingest": "./src/ingest.js",
     "./metrics": "./src/metrics.js",
+    "./nox-config": "./src/nox-config.js",
     "./runs": "./src/runs.js",
     "./scoring": "./src/scoring.js",
     "./surreal": "./src/surreal.js",
@@ -55,7 +56,11 @@
     "dfc:embed": "tsx scripts/dfc-embed.ts",
     "dfc:memory:doctor": "tsx scripts/dfc-memory-doctor.ts",
     "dfc:memory:gc": "tsx scripts/dfc-memory-gc.ts",
-    "dfc:nox": "tsx scripts/dfc-nox.ts"
+    "dfc:nox": "tsx scripts/dfc-nox.ts",
+    "nox:init": "tsx scripts/nox-init.ts",
+    "nox:models": "tsx scripts/nox-models.ts",
+    "nox:config:embedding": "tsx scripts/nox-config-embedding.ts",
+    "nox:snippets": "tsx scripts/nox-snippets.ts"
   },
   "dependencies": {
     "@huggingface/transformers": "^4.2.0",

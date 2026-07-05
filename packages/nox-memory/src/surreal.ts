@@ -6,6 +6,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Surreal } from "surrealdb";
 import type { QueryResponse } from "surrealdb";
+import { noxConfigEnv } from "./nox-config.js";
 import type { DfcConfig } from "./types.js";
 
 const moduleDir = dirname(fileURLToPath(import.meta.url));
@@ -83,10 +84,12 @@ export function resolveDfcDir(): string {
 }
 
 /**
- * Merged KEY=VALUE view of the gitignored .dfc env files, lowest→highest precedence:
- * surreal.example.env (template) < surreal.env (real connection) < embed.env (embedding
- * provider + key). Shared by the SurrealDB config and the embedding-provider config so
- * secrets live only in gitignored files and never need to be passed on the command line.
+ * Merged KEY=VALUE view of config sources, lowest→highest precedence:
+ * .nox/config.json (repo-local, no secrets) < surreal.example.env (template) <
+ * surreal.env (real connection) < embed.env (embedding provider + key). Shared by
+ * the SurrealDB config and the embedding-provider config so secrets live only in
+ * gitignored files and never need to be passed on the command line. Callers
+ * (loadConfig, resolveEmbedConfig) layer process.env on top of all of this.
  */
 export function dfcFileEnv(repoRoot?: string): Record<string, string> {
   const pluginDfcDir = join(REPO_ROOT, ".dfc");
@@ -106,6 +109,7 @@ export function dfcFileEnv(repoRoot?: string): Record<string, string> {
           ...parseEnvFile(join(targetDfcDir, "embed.env")),
         };
   return {
+    ...noxConfigEnv(targetRoot),
     ...pluginEnv,
     ...targetEnv,
   };

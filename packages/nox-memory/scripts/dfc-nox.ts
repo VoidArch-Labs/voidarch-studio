@@ -29,6 +29,7 @@ const COUNT_TABLES = [
   "lesson",
   "snippet",
   "repo_fact",
+  "task_note",
   "task",
   "blocker",
   "context_pack",
@@ -179,7 +180,7 @@ async function search(repoRoot: string, q: string): Promise<Record<string, unkno
     ).catch(() => []);
 
     const memories: Array<Record<string, unknown>> = [];
-    for (const table of ["decision", "evidence_item", "lesson", "snippet", "repo_fact"]) {
+    for (const table of ["decision", "evidence_item", "lesson", "snippet", "repo_fact", "task_note"]) {
       const rows = await queryResult<Array<Record<string, unknown>>>(
         db,
         `SELECT summary, tags, source_agent, created_at FROM type::table($t)
@@ -226,7 +227,8 @@ async function contextPreview(repoRoot: string, task: string, allowPaidEmbedding
           pack.memory_context.evidence.length +
           pack.memory_context.lessons.length +
           pack.memory_context.repo_facts.length +
-          pack.memory_context.snippets.length,
+          pack.memory_context.snippets.length +
+          pack.memory_context.task_notes.length,
         state: pack.state.open_blockers.length + pack.state.open_tasks.length,
         runs: pack.agent_context.recent_runs.length + pack.agent_context.recent_tool_events.length,
       },

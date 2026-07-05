@@ -1,26 +1,50 @@
-// dfc:context - build a context pack for a task and print COMPACT JSON ONLY to
-// stdout. All diagnostics go to stderr so the output stays machine-readable.
+// dfc:context - build a context pack for a task and print it to stdout. All
+// diagnostics go to stderr so stdout stays clean (machine-readable JSON, or
+// pasteable Markdown). Default output format is JSON here (pnpm dfc:context /
+// dashboard compat); the `nox` bin defaults to --format markdown instead.
 //   pnpm dfc:context --task "Add approval logging"
+//   pnpm dfc:context --task "..." --format markdown --max-tokens 5000
+//   pnpm dfc:context --task "..." --no-include-memory --no-include-graph
 
 import { Table } from "surrealdb";
 import { normalizeSourceAgent } from "../src/agents.js";
-import { buildContextPack } from "../src/context-pack.js";
+import { buildContextPack, formatContextPackMarkdown } from "../src/context-pack.js";
 import { withDb } from "../src/surreal.js";
-import { parseArgs, repoRootFromArgs } from "../src/cli.js";
+import { parseArgs, positiveIntArg, repoRootFromArgs, type CliArgs } from "../src/cli.js";
+
+/** `--include-memory` (default on) / `--no-include-memory` (explicit off). */
+function boolFlag(args: CliArgs, key: string): boolean {
+  if (args[`no-${key}`] === "true") return false;
+  if (args[key] === "false") return false;
+  return true;
+}
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const task = (args.task || "").trim();
   const sourceAgent = normalizeSourceAgent(args.agent);
   const repoRoot = repoRootFromArgs(args);
+  const format = (args.format || "json").toLowerCase();
+  if (format !== "json" && format !== "markdown") {
+    console.error(`--format must be "json" or "markdown" (got "${format}")`);
+    process.exit(2);
+  }
+  const maxTokens = positiveIntArg(args, "max-tokens");
+  const includeMemory = boolFlag(args, "include-memory");
+  const includeGraph = boolFlag(args, "include-graph");
   if (!task) {
     console.error("--task is required");
     process.exit(2);
   }
 
   const pack = await withDb(async (db, cfg) => {
-    const built = await buildContextPack(db, cfg.repoId, task, { repoRoot });
-    // Best-effort audit trail; never allowed to break the JSON contract.
+    const built = await buildContextPack(db, cfg.repoId, task, {
+      repoRoot,
+      maxTokens,
+      includeMemory,
+      includeGraph,
+    });
+    // Best-effort audit trail; never allowed to break the output contract.
     try {
       const now = new Date().toISOString();
       await db.create(new Table("task")).content({
@@ -45,7 +69,11 @@ async function main(): Promise<void> {
     return built;
   }, { repoRoot });
 
-  process.stdout.write(`${JSON.stringify(pack)}\n`);
+  if (format === "markdown") {
+    process.stdout.write(formatContextPackMarkdown(pack));
+  } else {
+    process.stdout.write(`${JSON.stringify(pack)}\n`);
+  }
 }
 
 try {

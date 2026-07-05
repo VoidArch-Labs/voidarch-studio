@@ -37,6 +37,29 @@ function envValue(k: string, repoRoot?: string): string {
   return (process.env[k] ?? dfcFileEnv(repoRoot)[k] ?? "").trim();
 }
 
+/**
+ * NOX_EMBED_* aliases for the DFC_EMBED_* equivalents (spec: nox-memory-and-studio-mvp-v2.md
+ * §4). DFC_* always wins when both are set — NOX_ is a fallback only, read from the same
+ * precedence chain (process.env over .dfc env files) so it never weakens the paid gate.
+ */
+const NOX_ALIAS: Record<string, string> = {
+  DFC_EMBED_PROVIDER: "NOX_EMBED_PROVIDER",
+  DFC_EMBED_MODEL: "NOX_EMBED_MODEL",
+  DFC_EMBED_HOST: "NOX_EMBED_BASE_URL",
+  DFC_EMBED_DIMENSION: "NOX_EMBED_DIMENSIONS",
+  DFC_EMBED_APPROVED: "NOX_EMBED_APPROVED",
+  OPENAI_API_KEY: "NOX_EMBED_API_KEY",
+};
+
+/** `get()` with NOX_ fallback: DFC_* (env or .dfc file) wins; NOX_* is used only if unset. */
+function getWithNoxAlias(dfcKey: string, fileEnv: Record<string, string>): string {
+  const dfcVal = (process.env[dfcKey] ?? fileEnv[dfcKey] ?? "").trim();
+  if (dfcVal) return dfcVal;
+  const noxKey = NOX_ALIAS[dfcKey];
+  if (!noxKey) return "";
+  return (process.env[noxKey] ?? fileEnv[noxKey] ?? "").trim();
+}
+
 export type EmbedProvider = "local" | "none" | "ollama" | "openai";
 
 const DEFAULT_LOCAL_MODEL = "onnx-community/all-MiniLM-L6-v2-ONNX";
@@ -96,7 +119,7 @@ function supportsOpenAiDimensions(model: string): boolean {
 /** Resolve embedding configuration from env (+ optional --approve). Pure. */
 export function resolveEmbedConfig(opts?: { approve?: boolean; repoRoot?: string }): EmbedConfig {
   const fileEnv = dfcFileEnv(opts?.repoRoot);
-  const get = (k: string): string => (process.env[k] ?? fileEnv[k] ?? "").trim();
+  const get = (k: string): string => getWithNoxAlias(k, fileEnv);
   const provider = normalizeProvider(get("DFC_EMBED_PROVIDER"));
   const model = provider === "unknown" ? get("DFC_EMBED_MODEL") : get("DFC_EMBED_MODEL") || defaultModel(provider);
   const dimension = Number.parseInt(get("DFC_EMBED_DIMENSION") || "0", 10) || 0;

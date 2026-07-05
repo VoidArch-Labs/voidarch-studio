@@ -189,7 +189,7 @@ function buildQueryPlan(
 
 async function fetchMemory(
   db: Surreal,
-  table: "decision" | "evidence_item" | "lesson" | "repo_fact",
+  table: "decision" | "evidence_item" | "lesson" | "repo_fact" | "task_note",
   repoId: string,
   terms: string[],
   riskTerms: string[],
@@ -396,12 +396,26 @@ async function fetchToolEvents(
     .slice(0, 8);
 }
 
+export interface BuildContextPackOptions {
+  repoRoot?: string;
+  allowPaidEmbeddings?: boolean;
+  /** Token budget ceiling for greedy packing (default TARGET_TOKENS = 3200). */
+  maxTokens?: number;
+  /** Include memory_context (decisions/evidence/lessons/repo_facts/snippets/task_notes). Default true. */
+  includeMemory?: boolean;
+  /** Include repo_context.graph_neighborhood + symbols. Default true. */
+  includeGraph?: boolean;
+}
+
 export async function buildContextPack(
   db: Surreal,
   repoId: string,
   task: string,
-  opts: { repoRoot?: string; allowPaidEmbeddings?: boolean } = {},
+  opts: BuildContextPackOptions = {},
 ): Promise<ContextPack> {
+  const targetTokens = opts.maxTokens && opts.maxTokens > 0 ? opts.maxTokens : TARGET_TOKENS;
+  const includeMemory = opts.includeMemory !== false;
+  const includeGraph = opts.includeGraph !== false;
   const goal = task.trim();
   const phase: Phase = inferPhase(goal);
   const terms = Array.from(new Set(tokenize(goal))).slice(0, 12);
@@ -456,28 +470,38 @@ export async function buildContextPack(
     }))
     .sort((a, b) => b.score - a.score);
 
-  // --- remembered decisions + evidence ---
+  // --- remembered decisions + evidence (memory_context; skippable via includeMemory) ---
   const now = Date.now();
-  const decisions = await fetchMemory(db, "decision", repoId, terms, riskTerms, now);
-  const evidence = await fetchMemory(db, "evidence_item", repoId, terms, riskTerms, now);
-  // New-kind tables (0004) may not exist pre-migration; degrade to [] like docChunks.
+  let decisions: ContextMemoryEntry[] = [];
+  let evidence: ContextMemoryEntry[] = [];
   let lessons: ContextMemoryEntry[] = [];
-  try {
-    lessons = await fetchMemory(db, "lesson", repoId, terms, riskTerms, now);
-  } catch {
-    lessons = [];
-  }
   let repoFacts: ContextMemoryEntry[] = [];
-  try {
-    repoFacts = await fetchMemory(db, "repo_fact", repoId, terms, riskTerms, now);
-  } catch {
-    repoFacts = [];
-  }
   let snippets: ContextSnippetEntry[] = [];
-  try {
-    snippets = await fetchSnippets(db, repoId, terms, riskTerms, now);
-  } catch {
-    snippets = [];
+  let taskNotes: ContextMemoryEntry[] = [];
+  if (includeMemory) {
+    decisions = await fetchMemory(db, "decision", repoId, terms, riskTerms, now);
+    evidence = await fetchMemory(db, "evidence_item", repoId, terms, riskTerms, now);
+    // New-kind tables (0004/0005) may not exist pre-migration; degrade to [] like docChunks.
+    try {
+      lessons = await fetchMemory(db, "lesson", repoId, terms, riskTerms, now);
+    } catch {
+      lessons = [];
+    }
+    try {
+      repoFacts = await fetchMemory(db, "repo_fact", repoId, terms, riskTerms, now);
+    } catch {
+      repoFacts = [];
+    }
+    try {
+      snippets = await fetchSnippets(db, repoId, terms, riskTerms, now);
+    } catch {
+      snippets = [];
+    }
+    try {
+      taskNotes = await fetchMemory(db, "task_note", repoId, terms, riskTerms, now);
+    } catch {
+      taskNotes = [];
+    }
   }
   let openBlockers: ContextBlockerEntry[] = [];
   try {
@@ -505,6 +529,7 @@ export async function buildContextPack(
   let symbols: ContextSymbolEntry[] = [];
   let graphEdges: ContextGraphEdgeEntry[] = [];
   try {
+    if (!includeGraph) throw new Error("graph channel disabled");
     const hits = await queryGraphNodes(db, repoId, terms, riskTerms, 8);
     symbols = hits.map((h) => ({
       label: h.label,
@@ -574,13 +599,13 @@ export async function buildContextPack(
     repo_context: { files: [], symbols: [], graph_neighborhood: [] },
     document_context: { chunks: [] },
     vector_context: { chunks: [] },
-    memory_context: { decisions: [], evidence: [], lessons: [], repo_facts: [], snippets: [] },
+    memory_context: { decisions: [], evidence: [], lessons: [], repo_facts: [], snippets: [], task_notes: [] },
     state: { open_blockers: [], open_tasks: [] },
     verification: { last_failures: lastFailures.slice(0, 5) },
     workflow: { approval_required: approvalRequired, approval_available: approvalAvailable },
     agent_context: { recent_runs: [], recent_tool_events: [] },
     token_budget: {
-      target_tokens: TARGET_TOKENS,
+      target_tokens: targetTokens,
       estimated_tokens: 0,
       dropped_items: dropped,
     },
@@ -592,7 +617,7 @@ export async function buildContextPack(
 
   for (const f of scoredFiles) {
     const cost = estimateTokens(f.path + f.excerpt);
-    if (tokens + cost > TARGET_TOKENS) {
+    if (tokens + cost > targetTokens) {
       dropped.push(`file:${f.path}`);
       continue;
     }
@@ -601,7 +626,7 @@ export async function buildContextPack(
   }
   for (const s of symbols) {
     const cost = estimateTokens(`${s.label} ${s.source_file}`);
-    if (tokens + cost > TARGET_TOKENS) {
+    if (tokens + cost > targetTokens) {
       dropped.push(`symbol:${s.label}`);
       continue;
     }
@@ -610,7 +635,7 @@ export async function buildContextPack(
   }
   for (const dc of docChunks) {
     const cost = estimateTokens(`${dc.source_path} ${dc.excerpt}`);
-    if (tokens + cost > TARGET_TOKENS) {
+    if (tokens + cost > targetTokens) {
       dropped.push(`doc:${dc.source_path}#${dc.chunk_index}`);
       continue;
     }
@@ -619,7 +644,7 @@ export async function buildContextPack(
   }
   for (const d of decisions) {
     const cost = estimateTokens(d.summary);
-    if (tokens + cost > TARGET_TOKENS) {
+    if (tokens + cost > targetTokens) {
       dropped.push(`decision:${d.summary.slice(0, 40)}`);
       continue;
     }
@@ -628,7 +653,7 @@ export async function buildContextPack(
   }
   for (const e of evidence) {
     const cost = estimateTokens(e.summary);
-    if (tokens + cost > TARGET_TOKENS) {
+    if (tokens + cost > targetTokens) {
       dropped.push(`evidence:${e.summary.slice(0, 40)}`);
       continue;
     }
@@ -637,7 +662,7 @@ export async function buildContextPack(
   }
   for (const l of lessons) {
     const cost = estimateTokens(l.summary);
-    if (tokens + cost > TARGET_TOKENS) {
+    if (tokens + cost > targetTokens) {
       dropped.push(`lesson:${l.summary.slice(0, 40)}`);
       continue;
     }
@@ -646,7 +671,7 @@ export async function buildContextPack(
   }
   for (const rf of repoFacts) {
     const cost = estimateTokens(rf.summary);
-    if (tokens + cost > TARGET_TOKENS) {
+    if (tokens + cost > targetTokens) {
       dropped.push(`repo_fact:${rf.summary.slice(0, 40)}`);
       continue;
     }
@@ -655,16 +680,25 @@ export async function buildContextPack(
   }
   for (const sn of snippets) {
     const cost = estimateTokens(`${sn.summary} ${sn.excerpt}`);
-    if (tokens + cost > TARGET_TOKENS) {
+    if (tokens + cost > targetTokens) {
       dropped.push(`snippet:${sn.summary.slice(0, 40)}`);
       continue;
     }
     pack.memory_context.snippets.push(sn);
     tokens += cost;
   }
+  for (const tn of taskNotes) {
+    const cost = estimateTokens(tn.summary);
+    if (tokens + cost > targetTokens) {
+      dropped.push(`task_note:${tn.summary.slice(0, 40)}`);
+      continue;
+    }
+    pack.memory_context.task_notes.push(tn);
+    tokens += cost;
+  }
   for (const b of openBlockers) {
     const cost = estimateTokens(`${b.summary} ${b.task_goal ?? ""}`);
-    if (tokens + cost > TARGET_TOKENS) {
+    if (tokens + cost > targetTokens) {
       dropped.push(`blocker:${b.summary.slice(0, 40)}`);
       continue;
     }
@@ -673,7 +707,7 @@ export async function buildContextPack(
   }
   for (const t of openTasks) {
     const cost = estimateTokens(`${t.goal} ${t.status}`);
-    if (tokens + cost > TARGET_TOKENS) {
+    if (tokens + cost > targetTokens) {
       dropped.push(`task_state:${t.goal.slice(0, 40)}`);
       continue;
     }
@@ -682,7 +716,7 @@ export async function buildContextPack(
   }
   for (const ge of graphEdges) {
     const cost = estimateTokens(`${ge.src} ${ge.relation} ${ge.dst}`);
-    if (tokens + cost > TARGET_TOKENS) {
+    if (tokens + cost > targetTokens) {
       dropped.push(`graph_edge:${ge.relation}`);
       continue;
     }
@@ -691,7 +725,7 @@ export async function buildContextPack(
   }
   for (const v of vectorChunks) {
     const cost = estimateTokens(v.excerpt);
-    if (tokens + cost > TARGET_TOKENS) {
+    if (tokens + cost > targetTokens) {
       dropped.push(`vector:${v.source_id}`);
       continue;
     }
@@ -700,7 +734,7 @@ export async function buildContextPack(
   }
   for (const r of recentRuns) {
     const cost = estimateTokens(`${r.task_goal} ${r.summary}`);
-    if (tokens + cost > TARGET_TOKENS) {
+    if (tokens + cost > targetTokens) {
       dropped.push(`agent_run:${r.summary.slice(0, 40) || r.task_goal.slice(0, 40)}`);
       continue;
     }
@@ -709,7 +743,7 @@ export async function buildContextPack(
   }
   for (const e of recentToolEvents) {
     const cost = estimateTokens(`${e.tool_name} ${e.action} ${e.summary}`);
-    if (tokens + cost > TARGET_TOKENS) {
+    if (tokens + cost > targetTokens) {
       dropped.push(`tool_event:${e.tool_name}:${e.action}`.slice(0, 60));
       continue;
     }
@@ -719,4 +753,98 @@ export async function buildContextPack(
 
   pack.token_budget.estimated_tokens = tokens;
   return pack;
+}
+
+// ---- Markdown rendering (default output for the `nox` bin's `nox context`) ------
+
+function mdList(lines: string[]): string {
+  return lines.length ? lines.map((l) => `- ${l}`).join("\n") : "_none_";
+}
+
+/**
+ * Render a ContextPack as compact Markdown: Files, Symbols, Doc chunks, Memories,
+ * Graph, State, Verification hint — with a token estimate at the top. Keeps this
+ * pasteable into any agent chat without needing to parse JSON.
+ */
+export function formatContextPackMarkdown(pack: ContextPack): string {
+  const out: string[] = [];
+  out.push(`# Context pack: ${pack.task.goal}`);
+  out.push(
+    `_phase: ${pack.task.phase} · ~${pack.token_budget.estimated_tokens} tokens (budget ${pack.token_budget.target_tokens})_`,
+  );
+
+  out.push("\n## Files");
+  out.push(
+    mdList(
+      pack.repo_context.files
+        .slice(0, 20)
+        .map((f) => `\`${f.path}\` (score ${f.score}) — ${f.excerpt.slice(0, 140)}`),
+    ),
+  );
+
+  out.push("\n## Symbols");
+  out.push(
+    mdList(
+      pack.repo_context.symbols
+        .slice(0, 12)
+        .map((s) => `\`${s.label}\` (${s.kind}) — ${s.source_file}${s.source_location ? `:${s.source_location}` : ""}`),
+    ),
+  );
+
+  out.push("\n## Doc chunks");
+  out.push(
+    mdList(
+      pack.document_context.chunks
+        .slice(0, 10)
+        .map((c) => `${c.source_path} § ${c.heading || "(top)"} — ${c.excerpt.slice(0, 140)}`),
+    ),
+  );
+
+  out.push("\n## Memories");
+  const memLines: string[] = [];
+  const memSection = (label: string, items: ContextMemoryEntry[]) => {
+    for (const m of items.slice(0, 5)) memLines.push(`[${label}] ${m.summary}`);
+  };
+  memSection("decision", pack.memory_context.decisions);
+  memSection("evidence", pack.memory_context.evidence);
+  memSection("lesson", pack.memory_context.lessons);
+  memSection("repo_fact", pack.memory_context.repo_facts);
+  memSection("snippet", pack.memory_context.snippets);
+  memSection("task_note", pack.memory_context.task_notes);
+  out.push(mdList(memLines));
+
+  out.push("\n## Graph");
+  out.push(
+    mdList(
+      pack.repo_context.graph_neighborhood
+        .slice(0, 10)
+        .map((g) => `${g.src} —${g.relation}→ ${g.dst}`),
+    ),
+  );
+  if (pack.vector_context.chunks.length) {
+    out.push(
+      mdList(
+        pack.vector_context.chunks.slice(0, 6).map((v) => `(vector) ${v.source_id} — ${v.excerpt.slice(0, 140)}`),
+      ),
+    );
+  }
+
+  out.push("\n## State");
+  const stateLines = [
+    ...pack.state.open_blockers.map((b) => `blocker: ${b.summary}`),
+    ...pack.state.open_tasks.map((t) => `task (${t.status}): ${t.goal}`),
+  ];
+  out.push(mdList(stateLines));
+
+  out.push("\n## Verification hint");
+  out.push(
+    pack.verification.last_failures.length
+      ? mdList(pack.verification.last_failures.slice(0, 5))
+      : "_no recent verification failures on record_",
+  );
+  if (pack.workflow.approval_required.length) {
+    out.push(`\n**Approval required:** ${pack.workflow.approval_required.join(", ")}`);
+  }
+
+  return `${out.join("\n")}\n`;
 }

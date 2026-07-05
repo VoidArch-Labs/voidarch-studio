@@ -1,6 +1,6 @@
 // Shared types for the dev-flow-control SurrealDB dev-memory slice.
 
-export type MemoryKind = "decision" | "evidence" | "lesson" | "snippet" | "repo_fact";
+export type MemoryKind = "decision" | "evidence" | "lesson" | "snippet" | "repo_fact" | "task_note";
 export type SourceAgent = "manual" | "codex" | "claude" | "grok-build";
 export type Phase = "discuss" | "plan" | "execute" | "verify" | "ship";
 
@@ -319,6 +319,7 @@ export interface ContextPack {
     lessons: ContextMemoryEntry[];
     repo_facts: ContextMemoryEntry[];
     snippets: ContextSnippetEntry[];
+    task_notes: ContextMemoryEntry[];
   };
   state: {
     open_blockers: ContextBlockerEntry[];

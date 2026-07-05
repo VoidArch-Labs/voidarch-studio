@@ -28,7 +28,7 @@ import {
 
 const DB_TABLES = [
   "file", "document", "doc_chunk", "decision", "evidence_item",
-  "task", "blocker", "lesson", "snippet", "repo_fact",
+  "task", "blocker", "lesson", "snippet", "repo_fact", "task_note",
   "agent_run", "tool_event", "graph_snapshot", "graph_node", "graph_edge",
   "embedding_model", "embedding_chunk",
 ];

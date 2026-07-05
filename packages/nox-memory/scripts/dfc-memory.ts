@@ -20,6 +20,7 @@ const KIND_TABLES: Record<string, string> = {
   lesson: "lesson",
   snippet: "snippet",
   repo_fact: "repo_fact",
+  task_note: "task_note",
   context: "context_pack",
 };
 const SUBCOMMANDS = new Set(["add", "list", "search", "get", "update", "delete"]);
@@ -28,7 +29,7 @@ const CONTEXT_SUBCOMMANDS = new Set(["list", "get", "delete"]);
 function usage(msg: string): never {
   console.error(msg);
   console.error(
-    "usage: pnpm dfc:memory <add|list|search|get|update|delete> --kind <decision|evidence|lesson|snippet|repo_fact|context> [flags]",
+    "usage: pnpm dfc:memory <add|list|search|get|update|delete> --kind <decision|evidence|lesson|snippet|repo_fact|task_note|context> [flags]",
   );
   process.exit(2);
 }

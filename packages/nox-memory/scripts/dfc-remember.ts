@@ -31,6 +31,7 @@ async function main(): Promise<void> {
     lesson: "lesson",
     snippet: "snippet",
     repo_fact: "repo_fact",
+    task_note: "task_note",
   };
   const table = tables[kind];
   if (!table) {

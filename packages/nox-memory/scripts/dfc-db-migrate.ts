@@ -19,6 +19,7 @@ const MIGRATIONS = [
   "schema/0002_indexes.surql",
   "schema/0003_documents_graph_vectors.surql",
   "schema/0004_state_memory_kinds.surql",
+  "schema/0005_task_note.surql",
 ];
 
 function ident(name: string, label: string): string {
