@@ -291,25 +291,161 @@ struct SettingsPanel: View {
     }
 }
 
-// ---- integrated terminal (SwiftTerm) -------------------------------------------------
+// ---- integrated terminal + run loop (#26) --------------------------------------------
+
+/// One terminal launch bound to a run record.
+struct TerminalLaunch: Identifiable, Equatable {
+    var id: String            // run id
+    var worktreeId: String?
+    var cwd: String
+    var shellCommand: String  // full zsh -lc line (cd + command + tee transcript)
+    var stdinPrompt: String?  // sent after launch when injection mode is .stdin
+}
+
+/// Escape a string for single-quoted zsh interpolation.
+private func shellQuote(_ s: String) -> String {
+    "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'"
+}
 
 struct TerminalPanel: View {
+    @EnvironmentObject var daemon: DaemonClient
+    @EnvironmentObject var store: ProfileStore
+    @State private var selectedTaskId = ""
+    @State private var selectedProfileId = "generic-shell"
+    @State private var selectedWorktreeId = ""
+    @State private var promptOverride = ""
+    @State private var launch: TerminalLaunch?
+    @State private var running = false
+    private let terminalRef = TerminalRef()
+
     var body: some View {
-        LocalProcessTerminal()
+        VStack(spacing: 0) {
+            HStack {
+                Picker("Task", selection: $selectedTaskId) {
+                    Text("Task…").tag("")
+                    ForEach(daemon.tasks.filter { $0.status != "done" }) { Text($0.goal).lineLimit(1).tag($0.id) }
+                }.frame(maxWidth: 260)
+                Picker("Profile", selection: $selectedProfileId) {
+                    ForEach(store.profiles) { Text($0.displayName).tag($0.id) }
+                }.frame(maxWidth: 200)
+                Picker("Worktree", selection: $selectedWorktreeId) {
+                    Text("repo root").tag("")
+                    ForEach(daemon.worktrees) { Text($0.id).tag($0.id) }
+                }.frame(maxWidth: 200)
+                Button("Launch agent") { Task { await launchAgent() } }
+                    .disabled(selectedTaskId.isEmpty || running)
+                Button("Kill", role: .destructive) { killRun() }
+                    .disabled(!running)
+                Spacer()
+            }
+            .padding(8)
+            TextField("Prompt override (empty = rendered profile prompt; for generic shell this is the command)",
+                      text: $promptOverride)
+                .textFieldStyle(.roundedBorder).padding(.horizontal, 8)
+            RunTerminal(launch: launch, ref: terminalRef) { exitCode in
+                Task { await runExited(exitCode: exitCode) }
+            }
+            .id(launch?.id ?? "idle-shell")
             .padding(4)
+        }
+    }
+
+    private func launchAgent() async {
+        guard let task = daemon.tasks.first(where: { $0.id == selectedTaskId }),
+              let profile = store.profiles.first(where: { $0.id == selectedProfileId }) else { return }
+        let worktree = daemon.worktrees.first { $0.id == selectedWorktreeId }
+        let cwd = worktree?.path ?? FileManager.default.currentDirectoryPath
+        let prompt = promptOverride.isEmpty
+            ? PromptSpec().render(
+                task: task.goal,
+                contextPack: daemon.attachedContextPack?.markdown ?? "(none)",
+                worktreePath: cwd)
+            : promptOverride
+        guard let run = await daemon.createRun(
+            taskId: task.id, worktreeId: worktree?.id,
+            provider: profile.id, model: profile.defaultModel.isEmpty ? nil : profile.defaultModel,
+            promptProfileId: profile.id, promptHash: promptHash(prompt)) else { return }
+
+        var parts = [profile.commandTemplate] + profile.argsTemplate
+        if profile.promptInjectionMode == .arg { parts.append(prompt) }
+        let env = profile.envVars.map { "export \($0.key)=\(shellQuote($0.value));" }.joined(separator: " ")
+        let cmd = parts.dropFirst().reduce(shellQuote(parts[0])) { $0 + " " + shellQuote($1) }
+        // ponytail: transcript via tee, not a dataReceived subclass — captures stdout/stderr,
+        // loses raw keystrokes; switch to a TerminalView subclass if full fidelity matters.
+        let line = "cd \(shellQuote(cwd)) && \(env) \(cmd) 2>&1 | tee \(shellQuote(run.transcriptPath)); exit ${pipestatus[1]}"
+        launch = TerminalLaunch(
+            id: run.id, worktreeId: worktree?.id, cwd: cwd, shellCommand: line,
+            stdinPrompt: profile.promptInjectionMode == .stdin ? prompt : nil)
+        running = true
+    }
+
+    private func runExited(exitCode: Int32?) async {
+        guard let launch else { return }
+        running = false
+        var changed: [String] = []
+        if let wt = launch.worktreeId, let diff = await daemon.worktreeDiff(id: wt) {
+            changed = diff.files.map(\.path)
+        }
+        await daemon.finishRun(
+            id: launch.id,
+            status: exitCode == 0 ? "done" : "failed",
+            exitCode: exitCode.map(Int.init),
+            changedFiles: changed)
+    }
+
+    private func killRun() {
+        terminalRef.view?.process.terminate()
+        // processTerminated fires with a nil/normal exit; force failed status here.
+        if let launch {
+            running = false
+            Task { await daemon.finishRun(id: launch.id, status: "failed", exitCode: nil, changedFiles: []) }
+        }
+        launch = nil
     }
 }
 
-/// PTY-backed terminal running the user's shell. MVP (tomorrow) binds cwd to the
-/// selected worktree and launches provider profiles in here.
-struct LocalProcessTerminal: NSViewRepresentable {
+/// Escape hatch so the panel can terminate the PTY child.
+final class TerminalRef {
+    weak var view: LocalProcessTerminalView?
+}
+
+struct RunTerminal: NSViewRepresentable {
+    var launch: TerminalLaunch?
+    var ref: TerminalRef
+    var onExit: (Int32?) -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator(onExit: onExit) }
+
     func makeNSView(context: Context) -> LocalProcessTerminalView {
         let view = LocalProcessTerminalView(frame: .zero)
-        let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
-        view.startProcess(executable: shell, args: ["-l"])
+        view.processDelegate = context.coordinator
+        ref.view = view
+        if let launch {
+            view.startProcess(executable: "/bin/zsh", args: ["-lc", launch.shellCommand],
+                              currentDirectory: launch.cwd)
+            if let prompt = launch.stdinPrompt {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak view] in
+                    view?.send(txt: prompt + "\n")
+                }
+            }
+        } else {
+            let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
+            view.startProcess(executable: shell, args: ["-l"])
+        }
         return view
     }
     func updateNSView(_ nsView: LocalProcessTerminalView, context: Context) {}
+
+    final class Coordinator: NSObject, LocalProcessTerminalViewDelegate {
+        let onExit: (Int32?) -> Void
+        init(onExit: @escaping (Int32?) -> Void) { self.onExit = onExit }
+        func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {}
+        func setTerminalTitle(source: LocalProcessTerminalView, title: String) {}
+        func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
+        func processTerminated(source: TerminalView, exitCode: Int32?) {
+            onExit(exitCode)
+        }
+    }
 }
 
 // ---- embedded dashboard views (WKWebView) --------------------------------------------

@@ -67,7 +67,7 @@ export const FLAGS: FeatureFlag[] = [
   {
     id: "studio.terminal",
     owner: "studio",
-    status: "scaffolded",
+    status: "experimental",
     defaultEnabled: false,
     requiresApproval: false,
     description: "Integrated PTY terminal sessions attached to runs/worktrees.",
