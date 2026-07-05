@@ -190,3 +190,12 @@ corrected to `wss://host`; once fixed, the host resolved and `/health` returned 
 - Memory kinds are now five: `decision`, `evidence`, `lesson`, `snippet`, `repo_fact` (migration `schema/0004_state_memory_kinds.surql`).
 - Task/blocker state (`dfc:task`, `dfc:blocker`) is live and surfaces in context packs under `state.open_tasks` / `state.open_blockers`.
 - `dfc:metrics` (summary, `--json`) and `dfc:sync` (`--to`/`--from <url>`, one-way copy of repo-scoped tables between embedded and hosted, `--dry-run`) round out the CLI; the dashboard now shows tasks, blockers, lessons, snippets, repo facts, and metrics.
+
+## 6. Lessons from the Nox dashboard round (2026-07-05)
+
+- The dashboard is now **Nox** — single-page control room (`docs/nox-dashboard.md`), frontend split out to `dashboard/` (plain HTML/CSS/JS), server still `scripts/dfc-dashboard.ts`.
+- `[hidden]` loses to any CSS `display:` rule on the same element — pair custom-displayed elements with an explicit `[hidden] { display: none; }`.
+- `--repo-root` with a **relative** path resolves against the process cwd; `pnpm --dir` changes that cwd, so launcher configs must pass absolute paths.
+- Spawning `claude -p` from a server that was itself started inside a Claude session works once `CLAUDECODE`/`CLAUDE_CODE_*` are stripped from the child env (the nested-session guard is env-based). Verified live: plan-mode run returned its result through stream-json.
+- Claude Code transcripts (`~/.claude/projects/<munged path>/*.jsonl`) carry per-message `usage` (input/output/cache read/creation + model) — real token accounting needs no new instrumentation. Match the repo root **and its direct parent only**; walking all parents sweeps in unrelated projects' sessions.
+- Embedded SurrealKV + a long-lived server: serialize all DB access through one promise queue and connect/close per query, so CLI commands can interleave with dashboard refreshes.

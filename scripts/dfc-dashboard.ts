@@ -1,19 +1,35 @@
-// dfc:dashboard - per-repo development dashboard. Local-only live server (127.0.0.1).
+// dfc:dashboard — Nox: per-repo agent control room. Local-only live server (127.0.0.1).
 //
 //   pnpm dfc:dashboard [--repo-root /path/to/repo] [--port 4949]
 //
 // Local-first: works with no SurrealDB credentials (memory panel degrades to "off").
 // Sources: .agent-runs/ observability logs, graphify-out/ repo graph, plugin health
-// (manifest/hooks/skills/agents), git state, and — when creds exist — SurrealDB
+// (manifest/hooks/skills/agents), git state, Claude Code transcripts (~/.claude/projects,
+// token usage), bundled workflow definitions, and — when configured — SurrealDB
 // dev-memory (table counts, open tasks/blockers, recent memories, deep metrics).
+//
+// Control surfaces (all local, never exposed off-loopback):
+//   POST /api/agents/launch   spawn a headless `claude -p` run (stream-json, logged)
+//   POST /api/agents/:id/kill terminate a spawned run
+//   POST /api/assistant       Mercury (OpenAI-compatible) read-only repo assistant
 
-import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { type ChildProcess, execFileSync, spawn } from "node:child_process";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { homedir } from "node:os";
 import { createServer } from "node:http";
-import { extname, join, normalize } from "node:path";
+import type { IncomingMessage, ServerResponse } from "node:http";
+import { basename, dirname, extname, join, normalize } from "node:path";
 import { parseArgs, repoRootFromArgs } from "../src/memory/cli.js";
 import { type DfcMetrics, collectMetrics } from "../src/memory/metrics.js";
-import { REPO_ROOT, isEmbeddedUrl, loadConfig, queryResult, withDb } from "../src/memory/surreal.js";
+import {
+  REPO_ROOT,
+  embeddedDataDir,
+  isEmbeddedUrl,
+  loadConfig,
+  parseEnvFile,
+  queryResult,
+  withDb,
+} from "../src/memory/surreal.js";
 
 // Short timeouts for an interactive dashboard (only if the user has not overridden).
 process.env.DFC_SURREAL_CONNECT_TIMEOUT_MS ??= "8000";
@@ -21,6 +37,16 @@ process.env.DFC_SURREAL_CONNECT_ATTEMPTS ??= "1";
 process.env.DFC_SURREAL_QUERY_TIMEOUT_MS ??= "15000";
 
 const MAX_JSONL_BYTES = 2 * 1024 * 1024;
+
+// Embedded SurrealKV is single-process; serialize every DB touch from this server
+// so a state refresh and an assistant tool call never fight over the LOCK file.
+let dbQueue: Promise<unknown> = Promise.resolve();
+function withDbSerial<T>(fn: Parameters<typeof withDb<T>>[0], repoRoot: string): Promise<T> {
+  const run = () => withDb(fn, { repoRoot });
+  const next = dbQueue.then(run, run);
+  dbQueue = next.catch(() => {});
+  return next;
+}
 
 interface Health {
   name: string;
@@ -142,6 +168,13 @@ function collectHealth(repoRoot: string): Health[] {
       ? { name: "Dev-memory config", status: "ok", detail: `${cfg.database} @ ${cfg.url.replace(/^wss?:\/\//, "")}` }
       : { name: "Dev-memory config", status: "off", detail: "no SurrealDB credentials (.dfc/surreal.env) — memory panel disabled" },
   );
+
+  const mercury = loadMercuryConfig(repoRoot);
+  checks.push(
+    mercury.key
+      ? { name: "Mercury assistant", status: "ok", detail: `${mercury.model} @ ${mercury.baseUrl}` }
+      : { name: "Mercury assistant", status: "off", detail: "no MERCURY_API_KEY (.dfc/mercury.env) — assistant disabled" },
+  );
   return checks;
 }
 
@@ -153,7 +186,10 @@ interface SessionSummary {
   top_tools: string;
   verified: boolean;
   graph_scanned: boolean;
+  active: boolean;
 }
+
+const ACTIVE_WINDOW_MS = 10 * 60_000;
 
 function collectSessions(repoRoot: string): SessionSummary[] {
   const dir = join(repoRoot, ".agent-runs", "sessions");
@@ -171,14 +207,16 @@ function collectSessions(repoRoot: string): SessionSummary[] {
     }
     const top = [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4)
       .map(([t, n]) => `${t}×${n}`).join("  ");
+    const last = String(events[events.length - 1]?.timestamp ?? "");
     sessions.push({
       id,
       events: events.length,
       first: String(events[0]?.timestamp ?? ""),
-      last: String(events[events.length - 1]?.timestamp ?? ""),
+      last,
       top_tools: top,
       verified: existsSync(join(dir, id, "verification.json")),
       graph_scanned: existsSync(join(dir, id, "graph-scanned.json")),
+      active: Date.now() - Date.parse(last) < ACTIVE_WINDOW_MS,
     });
   }
   return sessions.sort((a, b) => (a.last < b.last ? 1 : -1)).slice(0, 20);
@@ -215,6 +253,220 @@ function collectGraph(repoRoot: string): Record<string, unknown> {
   };
 }
 
+// ---- Workflows (definitions from workflows/*.js meta blocks) ---------------------
+
+interface WorkflowInfo {
+  name: string;
+  description: string;
+  when_to_use: string;
+  phases: string[];
+  file: string;
+  source: string;
+}
+
+function parseWorkflowMeta(path: string, source: string): WorkflowInfo | undefined {
+  try {
+    const text = readFileSync(path, "utf8");
+    const meta = /export const meta = \{([\s\S]*?)\n\}/.exec(text)?.[1] ?? "";
+    const str = (key: string) => new RegExp(`${key}:\\s*'((?:[^'\\\\]|\\\\.)*)'`).exec(meta)?.[1] ?? "";
+    const phases = [...meta.matchAll(/title:\s*'([^']+)'/g)].map((m) => m[1]);
+    const name = str("name") || basename(path, ".js");
+    return { name, description: str("description"), when_to_use: str("whenToUse"), phases, file: path, source };
+  } catch {
+    return undefined;
+  }
+}
+
+function collectWorkflows(repoRoot: string): WorkflowInfo[] {
+  const out: WorkflowInfo[] = [];
+  const dirs = [
+    { dir: join(REPO_ROOT, "workflows"), source: "plugin" },
+    { dir: join(repoRoot, ".claude", "workflows"), source: "repo" },
+  ];
+  const seen = new Set<string>();
+  for (const { dir, source } of dirs) {
+    if (!existsSync(dir)) continue;
+    for (const f of readdirSync(dir).filter((f) => f.endsWith(".js"))) {
+      const info = parseWorkflowMeta(join(dir, f), source);
+      if (info && !seen.has(info.name)) {
+        seen.add(info.name);
+        out.push(info);
+      }
+    }
+  }
+  return out;
+}
+
+// ---- Sync / backend status --------------------------------------------------------
+
+function collectSync(repoRoot: string): Record<string, unknown> {
+  const cfg = loadConfig({ repoRoot });
+  const embedded = isEmbeddedUrl(cfg.url);
+  const dataDir = embedded ? embeddedDataDir(cfg.url) : null;
+  let lock: { present: boolean; age_seconds?: number } = { present: false };
+  if (dataDir && existsSync(join(dataDir, "LOCK"))) {
+    lock = { present: true, age_seconds: Math.round((Date.now() - statSync(join(dataDir, "LOCK")).mtimeMs) / 1000) };
+  }
+  // Hosted target on file: a wss:// URL in any .dfc env file means dfc:sync has somewhere to go.
+  const hostedConfigured = [".dfc/surreal.env", ".dfc/surreal.hosted.env"]
+    .flatMap((rel) => [join(repoRoot, rel), join(REPO_ROOT, rel)])
+    .some((p) => /^DFC_SURREAL_URL=wss?:\/\//m.test(existsSync(p) ? readFileSync(p, "utf8") : ""));
+  return {
+    mode: embedded ? "embedded" : "hosted",
+    url: cfg.url.replace(/:\/\/[^@]*@/, "://***@"),
+    database: cfg.database,
+    namespace: cfg.namespace,
+    repo_id: cfg.repoId,
+    data_dir: dataDir,
+    lock,
+    hosted_configured: hostedConfigured,
+  };
+}
+
+// ---- Token usage (Claude Code transcripts + context packs) -------------------------
+
+interface TokenAgg {
+  input: number;
+  output: number;
+  cache_read: number;
+  cache_creation: number;
+  messages: number;
+}
+
+interface TokensPanel {
+  available: boolean;
+  transcript_dirs: string[];
+  totals: TokenAgg;
+  by_model: Record<string, TokenAgg>;
+  by_day: Record<string, TokenAgg>; // last 14 days, ISO date → agg
+  sessions: Array<{ session: string; last: string; model: string } & TokenAgg>;
+  retrieval?: { total_packs: number; avg_estimated_tokens: number | null };
+}
+
+interface FileTokenCache {
+  mtimeMs: number;
+  size: number;
+  agg: { models: Record<string, TokenAgg>; days: Record<string, TokenAgg>; total: TokenAgg; last: string; topModel: string };
+}
+
+const tokenFileCache = new Map<string, FileTokenCache>();
+let tokensCache: { at: number; value: TokensPanel } | undefined;
+const TOKENS_TTL_MS = 60_000;
+
+function emptyAgg(): TokenAgg {
+  return { input: 0, output: 0, cache_read: 0, cache_creation: 0, messages: 0 };
+}
+
+function addAgg(into: TokenAgg, from: TokenAgg): void {
+  into.input += from.input;
+  into.output += from.output;
+  into.cache_read += from.cache_read;
+  into.cache_creation += from.cache_creation;
+  into.messages += from.messages;
+}
+
+/** Claude Code project transcript dirs that could cover this repo (repo root or any parent). */
+function transcriptDirs(repoRoot: string): string[] {
+  const override = process.env.DFC_TRANSCRIPTS_DIR;
+  if (override) return existsSync(override) ? [override] : [];
+  const base = join(homedir(), ".claude", "projects");
+  if (!existsSync(base)) return [];
+  const munge = (p: string) => p.replace(/[^A-Za-z0-9]/g, "-");
+  // Repo root + its direct parent (workspace root) only — walking further up
+  // would sweep in transcripts from unrelated projects (e.g. ~/Dev sessions).
+  const out: string[] = [];
+  for (const dir of [repoRoot, dirname(repoRoot)]) {
+    const candidate = join(base, munge(dir));
+    if (existsSync(candidate) && !out.includes(candidate)) out.push(candidate);
+  }
+  return out;
+}
+
+function parseTranscriptFile(path: string): FileTokenCache["agg"] {
+  const models: Record<string, TokenAgg> = {};
+  const days: Record<string, TokenAgg> = {};
+  const total = emptyAgg();
+  let last = "";
+  let text = "";
+  try {
+    text = readFileSync(path, "utf8");
+  } catch {
+    return { models, days, total, last, topModel: "" };
+  }
+  for (const line of text.split("\n")) {
+    if (!line.includes('"usage"')) continue;
+    let entry: { timestamp?: string; message?: { model?: string; usage?: Record<string, unknown> } };
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const usage = entry.message?.usage;
+    if (!usage) continue;
+    const one: TokenAgg = {
+      input: Number(usage.input_tokens ?? 0) || 0,
+      output: Number(usage.output_tokens ?? 0) || 0,
+      cache_read: Number(usage.cache_read_input_tokens ?? 0) || 0,
+      cache_creation: Number(usage.cache_creation_input_tokens ?? 0) || 0,
+      messages: 1,
+    };
+    addAgg(total, one);
+    const model = entry.message?.model ?? "unknown";
+    addAgg((models[model] ??= emptyAgg()), one);
+    const day = (entry.timestamp ?? "").slice(0, 10);
+    if (day) addAgg((days[day] ??= emptyAgg()), one);
+    if (entry.timestamp && entry.timestamp > last) last = entry.timestamp;
+  }
+  const topModel = Object.entries(models).sort((a, b) => b[1].output - a[1].output)[0]?.[0] ?? "";
+  return { models, days, total, last, topModel };
+}
+
+function collectTokens(repoRoot: string, retrieval?: TokensPanel["retrieval"]): TokensPanel {
+  if (tokensCache && Date.now() - tokensCache.at < TOKENS_TTL_MS) {
+    if (retrieval) tokensCache.value.retrieval = retrieval;
+    return tokensCache.value;
+  }
+  const dirs = transcriptDirs(repoRoot);
+  const panel: TokensPanel = {
+    available: dirs.length > 0,
+    transcript_dirs: dirs,
+    totals: emptyAgg(),
+    by_model: {},
+    by_day: {},
+    sessions: [],
+    retrieval,
+  };
+  const cutoffDay = new Date(Date.now() - 14 * 86_400_000).toISOString().slice(0, 10);
+  for (const dir of dirs) {
+    for (const f of readdirSync(dir).filter((f) => f.endsWith(".jsonl"))) {
+      const path = join(dir, f);
+      let st: { mtimeMs: number; size: number };
+      try {
+        st = statSync(path);
+      } catch {
+        continue;
+      }
+      let cached = tokenFileCache.get(path);
+      if (!cached || cached.mtimeMs !== st.mtimeMs || cached.size !== st.size) {
+        cached = { mtimeMs: st.mtimeMs, size: st.size, agg: parseTranscriptFile(path) };
+        tokenFileCache.set(path, cached);
+      }
+      const { models, days, total, last, topModel } = cached.agg;
+      addAgg(panel.totals, total);
+      for (const [m, a] of Object.entries(models)) addAgg((panel.by_model[m] ??= emptyAgg()), a);
+      for (const [d, a] of Object.entries(days)) {
+        if (d >= cutoffDay) addAgg((panel.by_day[d] ??= emptyAgg()), a);
+      }
+      if (total.messages) {
+        panel.sessions.push({ session: basename(f, ".jsonl"), last, model: topModel, ...total });
+      }
+    }
+  }
+  panel.sessions = panel.sessions.sort((a, b) => (a.last < b.last ? 1 : -1)).slice(0, 12);
+  tokensCache = { at: Date.now(), value: panel };
+  return panel;
+}
+
 // ---- SurrealDB memory panel (optional, cached) --------------------------------
 
 interface MemoryPanel {
@@ -235,21 +487,23 @@ interface MemoryPanel {
 let memoryCache: { at: number; value: MemoryPanel } | undefined;
 const MEMORY_TTL_MS = 60_000;
 
-async function collectMemory(repoRoot: string, fresh: boolean): Promise<MemoryPanel> {
-  if (!fresh && memoryCache && Date.now() - memoryCache.at < MEMORY_TTL_MS) return memoryCache.value;
+function memoryConfigured(repoRoot: string): boolean {
   const cfg = loadConfig({ repoRoot });
   const placeholder = /<[^>]+>/;
   const embedded = cfg.url ? isEmbeddedUrl(cfg.url) : false;
-  if (
-    !cfg.url ||
-    placeholder.test(cfg.url) ||
-    (!embedded && (!cfg.username || !cfg.password || placeholder.test(cfg.username + cfg.password)))
-  ) {
-    return { available: false, error: "not configured" };
-  }
+  return Boolean(
+    cfg.url &&
+      !placeholder.test(cfg.url) &&
+      (embedded || (cfg.username && cfg.password && !placeholder.test(cfg.username + cfg.password))),
+  );
+}
+
+async function collectMemory(repoRoot: string, fresh: boolean): Promise<MemoryPanel> {
+  if (!fresh && memoryCache && Date.now() - memoryCache.at < MEMORY_TTL_MS) return memoryCache.value;
+  if (!memoryConfigured(repoRoot)) return { available: false, error: "not configured" };
   let value: MemoryPanel;
   try {
-    value = await withDb(async (db, c) => {
+    value = await withDbSerial<MemoryPanel>(async (db, c) => {
       const counts: Record<string, number> = {};
       for (const table of ["file", "doc_chunk", "decision", "evidence_item", "agent_run", "tool_event", "graph_node", "embedding_chunk", "task", "blocker", "lesson", "snippet", "repo_fact"]) {
         try {
@@ -271,9 +525,11 @@ async function collectMemory(repoRoot: string, fresh: boolean): Promise<MemoryPa
           return [];
         }
       };
-      const [decisions, evidence, lessons, repo_facts, snippets] = await Promise.all([
-        recent("decision"), recent("evidence_item"), recent("lesson"), recent("repo_fact"), recent("snippet"),
-      ]);
+      const decisions = await recent("decision");
+      const evidence = await recent("evidence_item");
+      const lessons = await recent("lesson");
+      const repo_facts = await recent("repo_fact");
+      const snippets = await recent("snippet");
       let agent_runs: Array<Record<string, unknown>> = [];
       try {
         agent_runs = await queryResult<Array<Record<string, unknown>>>(
@@ -306,7 +562,7 @@ async function collectMemory(repoRoot: string, fresh: boolean): Promise<MemoryPa
         available: true, counts, decisions, evidence, agent_runs,
         open_tasks, open_blockers, lessons, repo_facts, snippets, metrics,
       } satisfies MemoryPanel;
-    }, { repoRoot });
+    }, repoRoot);
   } catch (err) {
     value = { available: false, error: (err as Error).message };
   }
@@ -314,11 +570,448 @@ async function collectMemory(repoRoot: string, fresh: boolean): Promise<MemoryPa
   return value;
 }
 
+// ---- Spawned agents (headless `claude -p` runs launched from the dashboard) --------
+
+/** Tool-routing config chosen in the launcher; composed into --append-system-prompt. */
+interface AgentTools {
+  workflow?: string;   // default | native | superpowers | gsd
+  subagents?: string;  // default | native-dynamic | native-specific | antigravity-dynamic | antigravity-specific | codex
+  model?: string;      // for native-specific / antigravity-specific
+  effort?: string;     // for native-specific
+  search?: string;     // default | native | playwright | firecrawl
+  docs?: string;       // default | search | context7
+  git?: string;        // default | git-cli | gitkraken
+}
+
+const AGENT_MODELS = new Set(["sonnet", "opus", "haiku", "fable"]);
+const AGENT_EFFORTS = new Set(["low", "medium", "high", "max"]);
+
+function buildAgentSystemPrompt(t: AgentTools): string | undefined {
+  const lines: string[] = [];
+  const model = AGENT_MODELS.has(t.model ?? "") ? t.model : "sonnet";
+  const effort = AGENT_EFFORTS.has(t.effort ?? "") ? t.effort : "medium";
+  const W: Record<string, string> = {
+    native: "Workflows: for multi-step/multi-agent work use the native Workflow tool (definitions in workflows/ and .claude/workflows/).",
+    superpowers: "Workflows: follow the Superpowers skills — invoke superpowers:brainstorming before any creative work, superpowers:writing-plans before multi-step tasks, superpowers:test-driven-development while coding, and superpowers:verification-before-completion before claiming done. Load them with the Skill tool.",
+    gsd: "Workflows: structure the work with GSD skills (gsd-plan-phase → gsd-execute-phase, gsd-quick for small tasks, gsd-progress to check state). Load them with the Skill tool.",
+  };
+  const S: Record<string, string> = {
+    "native-dynamic": "Subagents: delegate parallel or exploratory work through the native Agent tool; choose the agent type per task (Explore for search, general-purpose otherwise).",
+    "native-specific": `Subagents: delegate through the native Agent tool and always pass model="${model}" and effort="${effort}" when spawning.`,
+    "antigravity-dynamic": "Subagents: delegate execution through Antigravity agents; let Antigravity pick the agent per task.",
+    "antigravity-specific": `Subagents: delegate execution through Antigravity agents pinned to model "${model}".`,
+    codex: "Subagents: delegate implementation tasks to Codex (headless `codex exec` via Bash, or the agent-cli MCP tools when available); keep review and integration yourself.",
+  };
+  const SE: Record<string, string> = {
+    native: "Web search: use the native WebSearch/WebFetch tools.",
+    playwright: "Web search/browsing: use the Playwright MCP browser tools (browser_navigate, browser_snapshot, …) instead of plain fetch.",
+    firecrawl: "Web search: use the Firecrawl MCP tools (firecrawl_search first, firecrawl_scrape for pages); do not use built-in web search.",
+  };
+  const D: Record<string, string> = {
+    search: "Library/framework docs: find current docs via web search.",
+    context7: "Library/framework docs: always use Context7 MCP (resolve-library-id, then query-docs) before answering from memory.",
+  };
+  const G: Record<string, string> = {
+    "git-cli": "Git: use the git CLI directly via Bash.",
+    gitkraken: "Git: use the GitKraken MCP tools (git_status, git_log_or_diff, git_add_or_commit, git_push, …) instead of raw git commands.",
+  };
+  if (t.workflow && W[t.workflow]) lines.push(W[t.workflow]);
+  if (t.subagents && S[t.subagents]) lines.push(S[t.subagents]);
+  if (t.search && SE[t.search]) lines.push(SE[t.search]);
+  if (t.docs && D[t.docs]) lines.push(D[t.docs]);
+  if (t.git && G[t.git]) lines.push(G[t.git]);
+  if (!lines.length) return undefined;
+  return "Tool routing for this run (configured from the Nox dashboard):\n- " + lines.join("\n- ");
+}
+
+interface SpawnedAgent {
+  id: string;
+  prompt: string;
+  permission_mode: string;
+  tools?: AgentTools;
+  system_prompt?: string;
+  status: "running" | "done" | "failed" | "killed";
+  started_at: string;
+  ended_at?: string;
+  exit_code?: number | null;
+  lines: string[]; // ring buffer of parsed activity lines
+  result?: string; // final assistant text
+  proc?: ChildProcess;
+}
+
+const spawnedAgents = new Map<string, SpawnedAgent>();
+const AGENT_LINE_LIMIT = 200;
+const ALLOWED_PERMISSION_MODES = new Set(["acceptEdits", "plan", "default"]);
+
+function agentLogPath(repoRoot: string, id: string): string {
+  const dir = join(repoRoot, ".agent-runs", "dashboard-agents");
+  mkdirSync(dir, { recursive: true });
+  return join(dir, `${id}.jsonl`);
+}
+
+function pushLine(agent: SpawnedAgent, line: string): void {
+  agent.lines.push(line);
+  if (agent.lines.length > AGENT_LINE_LIMIT) agent.lines.splice(0, agent.lines.length - AGENT_LINE_LIMIT);
+}
+
+/** Compact one stream-json event into a human line for the dashboard feed. */
+function describeStreamEvent(evt: Record<string, unknown>): string | undefined {
+  const type = String(evt.type ?? "");
+  if (type === "system") {
+    // hook_started/hook_response etc. are noise in a 200-line feed; init is the useful one
+    return evt.subtype === "init" ? `system: init (model ${String(evt.model ?? "?")})` : undefined;
+  }
+  if (type === "result") {
+    return `result: ${String(evt.subtype ?? "")} · ${String(evt.num_turns ?? "?")} turns · $${Number(evt.total_cost_usd ?? 0).toFixed(4)}`;
+  }
+  if (type === "assistant" || type === "user") {
+    const msg = evt.message as { content?: Array<Record<string, unknown>> } | undefined;
+    for (const block of msg?.content ?? []) {
+      if (block.type === "text" && String(block.text ?? "").trim()) {
+        return `${type}: ${String(block.text).trim().slice(0, 160)}`;
+      }
+      if (block.type === "tool_use") {
+        const input = block.input as Record<string, unknown> | undefined;
+        const hint = String(input?.command ?? input?.file_path ?? input?.pattern ?? "").slice(0, 90);
+        return `tool: ${String(block.name ?? "?")} ${hint}`;
+      }
+    }
+  }
+  return undefined;
+}
+
+function launchAgent(repoRoot: string, prompt: string, permissionMode: string, tools: AgentTools = {}): SpawnedAgent {
+  const id = `${new Date().toISOString().replace(/[:.]/g, "-")}-${Math.random().toString(36).slice(2, 7)}`;
+  const mode = ALLOWED_PERMISSION_MODES.has(permissionMode) ? permissionMode : "acceptEdits";
+  const systemPrompt = buildAgentSystemPrompt(tools);
+  // Strip the nested-session guard vars so a dashboard launched from inside a Claude
+  // session can still spawn headless workers (the guard is for interactive nesting).
+  const env = { ...process.env };
+  for (const k of Object.keys(env)) {
+    if (k === "CLAUDECODE" || k.startsWith("CLAUDE_CODE_")) delete env[k];
+  }
+  const agent: SpawnedAgent = {
+    id, prompt, permission_mode: mode, tools, system_prompt: systemPrompt, status: "running",
+    started_at: new Date().toISOString(), lines: [],
+  };
+  const logPath = agentLogPath(repoRoot, id);
+  const argv = ["-p", prompt, "--output-format", "stream-json", "--verbose", "--permission-mode", mode];
+  if (systemPrompt) argv.push("--append-system-prompt", systemPrompt);
+  const proc = spawn("claude", argv, { cwd: repoRoot, env, stdio: ["ignore", "pipe", "pipe"] });
+  agent.proc = proc;
+  let buffer = "";
+  proc.stdout?.on("data", (chunk: Buffer) => {
+    buffer += chunk.toString("utf8");
+    let nl = buffer.indexOf("\n");
+    while (nl !== -1) {
+      const line = buffer.slice(0, nl).trim();
+      buffer = buffer.slice(nl + 1);
+      nl = buffer.indexOf("\n");
+      if (!line) continue;
+      try {
+        appendFileSync(logPath, `${line}\n`);
+      } catch { /* logging must never kill the run */ }
+      try {
+        const evt = JSON.parse(line) as Record<string, unknown>;
+        const desc = describeStreamEvent(evt);
+        if (desc) pushLine(agent, desc);
+        if (evt.type === "result") agent.result = String(evt.result ?? "").slice(0, 4000);
+      } catch {
+        pushLine(agent, line.slice(0, 160));
+      }
+    }
+  });
+  proc.stderr?.on("data", (chunk: Buffer) => {
+    const text = chunk.toString("utf8").trim();
+    if (text) pushLine(agent, `stderr: ${text.slice(0, 200)}`);
+  });
+  proc.on("error", (err) => {
+    agent.status = "failed";
+    agent.ended_at = new Date().toISOString();
+    pushLine(agent, `spawn error: ${err.message}`);
+  });
+  proc.on("exit", (code) => {
+    if (agent.status === "running") agent.status = code === 0 ? "done" : "failed";
+    agent.exit_code = code;
+    agent.ended_at = new Date().toISOString();
+    agent.proc = undefined;
+  });
+  spawnedAgents.set(id, agent);
+  return agent;
+}
+
+function serializeAgents(): Array<Omit<SpawnedAgent, "proc">> {
+  return [...spawnedAgents.values()]
+    .sort((a, b) => (a.started_at < b.started_at ? 1 : -1))
+    .map(({ proc: _proc, ...rest }) => rest);
+}
+
+// ---- Mercury assistant (OpenAI-compatible, read-only tools) -------------------------
+
+interface MercuryConfig {
+  key: string;
+  baseUrl: string;
+  model: string;
+}
+
+function loadMercuryConfig(repoRoot: string): MercuryConfig {
+  const fileEnv = {
+    ...parseEnvFile(join(REPO_ROOT, ".dfc", "mercury.env")),
+    ...parseEnvFile(join(repoRoot, ".dfc", "mercury.env")),
+  };
+  const get = (k: string): string => (process.env[k] ?? fileEnv[k] ?? "").trim();
+  return {
+    key: get("MERCURY_API_KEY"),
+    baseUrl: (get("MERCURY_BASE_URL") || "https://api.inceptionlabs.ai/v1").replace(/\/$/, ""),
+    model: get("MERCURY_MODEL") || "mercury-2",
+  };
+}
+
+const ASSISTANT_TOOLS = [
+  {
+    type: "function",
+    function: {
+      name: "search_graph",
+      description: "Search the repo knowledge graph (files, modules, symbols, concepts) by name/keyword. Returns matching nodes with kind, file, and community.",
+      parameters: {
+        type: "object",
+        required: ["query"],
+        properties: { query: { type: "string", description: "substring/keyword to match node labels and file paths" } },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "graph_neighbors",
+      description: "List edges touching a graph node id (dependencies, callers, containment). Use a node id returned by search_graph.",
+      parameters: {
+        type: "object",
+        required: ["node_id"],
+        properties: { node_id: { type: "string" } },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "search_memory",
+      description: "Full-text search the dev-memory database: decisions, lessons, snippets, repo facts, evidence, plus open tasks and blockers.",
+      parameters: {
+        type: "object",
+        required: ["query"],
+        properties: { query: { type: "string" } },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_state",
+      description: "Snapshot of the repo/system state: git branch, health checks, session activity, sync/backend mode, metrics summary, token totals.",
+      parameters: { type: "object", properties: {} },
+    },
+  },
+];
+
+interface GraphData {
+  nodes: Array<Record<string, unknown>>;
+  links: Array<Record<string, unknown>>;
+}
+
+let graphDataCache: { mtimeMs: number; data: GraphData } | undefined;
+
+function loadGraphData(repoRoot: string): GraphData | undefined {
+  const path = join(repoRoot, "graphify-out", "graph.json");
+  if (!existsSync(path)) return undefined;
+  const mtimeMs = statSync(path).mtimeMs;
+  if (graphDataCache && graphDataCache.mtimeMs === mtimeMs) return graphDataCache.data;
+  const raw = readJson(path) as GraphData | undefined;
+  if (!raw?.nodes) return undefined;
+  graphDataCache = { mtimeMs, data: raw };
+  return raw;
+}
+
+function toolSearchGraph(repoRoot: string, query: string): unknown {
+  const g = loadGraphData(repoRoot);
+  if (!g) return { error: "no repo graph — run /graphify" };
+  const q = query.toLowerCase();
+  const hits = g.nodes
+    .filter((n) => String(n.label ?? "").toLowerCase().includes(q) || String(n.source_file ?? "").toLowerCase().includes(q))
+    .slice(0, 12)
+    .map((n) => ({ id: n.id, label: n.label, file_type: n.file_type, source_file: n.source_file, community: n.community }));
+  return { matches: hits, total_nodes: g.nodes.length };
+}
+
+function toolGraphNeighbors(repoRoot: string, nodeId: string): unknown {
+  const g = loadGraphData(repoRoot);
+  if (!g) return { error: "no repo graph — run /graphify" };
+  const labels = new Map(g.nodes.map((n) => [String(n.id), String(n.label ?? n.id)]));
+  const edges = g.links
+    .filter((l) => String(l.source) === nodeId || String(l.target) === nodeId)
+    .slice(0, 30)
+    .map((l) => ({
+      relation: l.relation,
+      from: labels.get(String(l.source)) ?? l.source,
+      to: labels.get(String(l.target)) ?? l.target,
+      source_file: l.source_file,
+    }));
+  return { node: labels.get(nodeId) ?? nodeId, edges };
+}
+
+async function toolSearchMemory(repoRoot: string, query: string): Promise<unknown> {
+  if (!memoryConfigured(repoRoot)) return { error: "dev-memory not configured" };
+  try {
+    return await withDbSerial(async (db, c) => {
+      const out: Record<string, unknown> = {};
+      for (const table of ["decision", "lesson", "snippet", "repo_fact", "evidence_item"]) {
+        try {
+          out[table] = await queryResult<unknown[]>(
+            db,
+            `SELECT summary, tags, created_at FROM type::table($t) WHERE repo_id = $repo AND (summary @@ $q OR text @@ $q) LIMIT 5`,
+            { t: table, repo: c.repoId, q: query },
+          );
+        } catch {
+          out[table] = [];
+        }
+      }
+      try {
+        out.open_tasks = await queryResult<unknown[]>(
+          db,
+          "SELECT goal, status, created_at FROM task WHERE repo_id = $repo AND status IN ['open','in_progress','blocked'] LIMIT 10",
+          { repo: c.repoId },
+        );
+        out.open_blockers = await queryResult<unknown[]>(
+          db,
+          "SELECT summary, status, created_at FROM blocker WHERE repo_id = $repo AND status = 'open' LIMIT 10",
+          { repo: c.repoId },
+        );
+      } catch { /* state tables optional */ }
+      return out;
+    }, repoRoot);
+  } catch (err) {
+    return { error: (err as Error).message };
+  }
+}
+
+async function toolGetState(repoRoot: string): Promise<unknown> {
+  const memory = await collectMemory(repoRoot, false);
+  const tokens = collectTokens(repoRoot);
+  return {
+    repo: {
+      branch: git(repoRoot, "rev-parse", "--abbrev-ref", "HEAD"),
+      head: git(repoRoot, "log", "-1", "--format=%h %s"),
+    },
+    health: collectHealth(repoRoot),
+    sessions: collectSessions(repoRoot).slice(0, 8),
+    spawned_agents: serializeAgents().map(({ lines: _lines, ...a }) => a).slice(0, 8),
+    sync: collectSync(repoRoot),
+    workflows: collectWorkflows(repoRoot).map((w) => ({ name: w.name, description: w.description })),
+    memory_counts: memory.counts ?? {},
+    open_tasks: memory.open_tasks ?? [],
+    open_blockers: memory.open_blockers ?? [],
+    tokens: { totals: tokens.totals, by_model: tokens.by_model },
+  };
+}
+
+async function runAssistantTool(repoRoot: string, name: string, args: Record<string, unknown>): Promise<unknown> {
+  switch (name) {
+    case "search_graph":
+      return toolSearchGraph(repoRoot, String(args.query ?? ""));
+    case "graph_neighbors":
+      return toolGraphNeighbors(repoRoot, String(args.node_id ?? ""));
+    case "search_memory":
+      return toolSearchMemory(repoRoot, String(args.query ?? ""));
+    case "get_state":
+      return toolGetState(repoRoot);
+    default:
+      return { error: `unknown tool: ${name}` };
+  }
+}
+
+const ASSISTANT_SYSTEM = (repoRoot: string): string =>
+  `You are Nox, the read-only assistant of the dev-flow-control dashboard for the repository at ${repoRoot}. ` +
+  `Answer questions about the repo, its architecture, its dev-memory (decisions/lessons/snippets/repo facts/tasks/blockers), ` +
+  `agents, workflows, metrics, and token usage. Use the tools to look things up before answering; prefer tool facts over guesses. ` +
+  `You cannot modify anything. Be concise and concrete; cite file paths and node names when relevant.`;
+
+interface AssistantMessage {
+  role: string;
+  content: string | null;
+  tool_calls?: Array<{ id: string; type: string; function: { name: string; arguments: string } }>;
+  tool_call_id?: string;
+}
+
+async function handleAssistant(repoRoot: string, body: { messages?: Array<{ role: string; content: string }> }): Promise<Record<string, unknown>> {
+  const mercury = loadMercuryConfig(repoRoot);
+  if (!mercury.key) {
+    return { error: "Mercury not configured. Set MERCURY_API_KEY (and optional MERCURY_BASE_URL, MERCURY_MODEL) in .dfc/mercury.env." };
+  }
+  const history = (body.messages ?? []).slice(-16).map((m) => ({
+    role: m.role === "assistant" ? "assistant" : "user",
+    content: String(m.content ?? "").slice(0, 8000),
+  }));
+  const messages: AssistantMessage[] = [
+    { role: "system", content: ASSISTANT_SYSTEM(repoRoot) },
+    ...history,
+  ];
+  const trace: Array<{ tool: string; args: unknown }> = [];
+  const MAX_ROUNDS = 6;
+  for (let round = 0; round < MAX_ROUNDS; round++) {
+    // Last round: withhold tools so the model must synthesize an answer from
+    // what it has gathered instead of looping on lookups forever.
+    const finalRound = round === MAX_ROUNDS - 1;
+    if (finalRound) {
+      messages.push({
+        role: "system",
+        content: "Tool budget exhausted. Answer the user's question now from the tool results above.",
+      });
+    }
+    const res = await fetch(`${mercury.baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${mercury.key}` },
+      body: JSON.stringify({
+        model: mercury.model,
+        messages,
+        ...(finalRound ? {} : { tools: ASSISTANT_TOOLS }),
+        max_tokens: 1200,
+      }),
+    });
+    if (!res.ok) {
+      const text = (await res.text()).slice(0, 400);
+      return { error: `Mercury API ${res.status}: ${text}` };
+    }
+    const data = (await res.json()) as { choices?: Array<{ message?: AssistantMessage }> };
+    const msg = data.choices?.[0]?.message;
+    if (!msg) return { error: "Mercury returned no choices" };
+    messages.push(msg);
+    const toolCalls = msg.tool_calls ?? [];
+    if (!toolCalls.length) {
+      return { reply: msg.content ?? "", trace };
+    }
+    for (const call of toolCalls) {
+      let args: Record<string, unknown> = {};
+      try {
+        args = JSON.parse(call.function.arguments || "{}") as Record<string, unknown>;
+      } catch { /* tolerate malformed args */ }
+      trace.push({ tool: call.function.name, args });
+      const result = await runAssistantTool(repoRoot, call.function.name, args);
+      messages.push({
+        role: "tool",
+        tool_call_id: call.id,
+        content: JSON.stringify(result).slice(0, 12_000),
+      });
+    }
+  }
+  return { error: "Assistant exceeded tool-call budget (6 rounds) without a final answer.", trace };
+}
+
 // ---- State assembly ------------------------------------------------------------
 
 async function buildState(repoRoot: string, fresh: boolean): Promise<Record<string, unknown>> {
   const cfg = loadConfig({ repoRoot });
   const dirty = git(repoRoot, "status", "--porcelain");
+  const memory = await collectMemory(repoRoot, fresh);
   return {
     generated_at: new Date().toISOString(),
     repo: {
@@ -332,14 +1025,21 @@ async function buildState(repoRoot: string, fresh: boolean): Promise<Record<stri
     },
     health: collectHealth(repoRoot),
     sessions: collectSessions(repoRoot),
+    spawned_agents: serializeAgents(),
     recent_events: readJsonl(join(repoRoot, ".agent-runs", "current.jsonl")).slice(-60).reverse(),
     approvals: collectApprovals(repoRoot),
     graph: collectGraph(repoRoot),
-    memory: await collectMemory(repoRoot, fresh),
+    workflows: collectWorkflows(repoRoot),
+    sync: collectSync(repoRoot),
+    tokens: collectTokens(repoRoot, memory.metrics
+      ? { total_packs: memory.metrics.retrieval.total, avg_estimated_tokens: memory.metrics.retrieval.avg_estimated_tokens }
+      : undefined),
+    memory,
+    assistant: { configured: Boolean(loadMercuryConfig(repoRoot).key), model: loadMercuryConfig(repoRoot).model },
   };
 }
 
-// ---- Static serving for graphify-out/ -------------------------------------------
+// ---- Static serving --------------------------------------------------------------
 
 const STATIC_TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -348,210 +1048,33 @@ const STATIC_TYPES: Record<string, string> = {
   ".css": "text/css",
   ".md": "text/plain; charset=utf-8",
   ".txt": "text/plain; charset=utf-8",
+  ".svg": "image/svg+xml",
 };
 
-function serveGraphifyFile(repoRoot: string, rel: string): { type: string; body: Buffer } | undefined {
+function serveFile(baseDir: string, rel: string): { type: string; body: Buffer } | undefined {
   const clean = normalize(rel).replace(/^(\.\.[/\\])+/, "");
-  const abs = join(repoRoot, "graphify-out", clean);
-  if (!abs.startsWith(join(repoRoot, "graphify-out"))) return undefined;
+  const abs = join(baseDir, clean);
+  if (!abs.startsWith(baseDir)) return undefined;
   const type = STATIC_TYPES[extname(abs)];
   if (!type || !existsSync(abs) || !statSync(abs).isFile()) return undefined;
   return { type, body: readFileSync(abs) };
 }
 
-// ---- HTML shell ------------------------------------------------------------------
-
-const PAGE = `<!doctype html>
-<html><head><meta charset="utf-8"><title>dev-flow-control</title>
-<style>
-  :root { --bg:#0e1117; --card:#161b22; --line:#2d333b; --fg:#c9d1d9; --dim:#8b949e;
-          --ok:#3fb950; --warn:#d29922; --fail:#f85149; --off:#6e7681; --accent:#58a6ff; }
-  * { box-sizing:border-box; }
-  body { margin:0; background:var(--bg); color:var(--fg);
-         font:14px/1.5 -apple-system, "Segoe UI", sans-serif; }
-  header { display:flex; align-items:baseline; gap:16px; padding:14px 22px;
-           border-bottom:1px solid var(--line); }
-  header h1 { font-size:16px; margin:0; }
-  header .sub { color:var(--dim); font-size:12px; }
-  nav { display:flex; gap:4px; padding:8px 22px 0; }
-  nav button { background:none; border:none; color:var(--dim); padding:8px 14px; cursor:pointer;
-               font-size:13px; border-bottom:2px solid transparent; }
-  nav button.active { color:var(--fg); border-bottom-color:var(--accent); }
-  main { padding:18px 22px; max-width:1200px; }
-  .cards { display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:12px; }
-  .card { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:12px 14px; }
-  .card h3 { margin:0 0 6px; font-size:13px; color:var(--dim); font-weight:600; }
-  .pill { display:inline-block; padding:1px 8px; border-radius:10px; font-size:11px; font-weight:600; }
-  .ok   { background:rgba(63,185,80,.15);  color:var(--ok); }
-  .warn { background:rgba(210,153,34,.15); color:var(--warn); }
-  .fail { background:rgba(248,81,73,.15);  color:var(--fail); }
-  .off  { background:rgba(110,118,129,.15);color:var(--off); }
-  table { width:100%; border-collapse:collapse; font-size:12.5px; margin-top:8px; }
-  th { text-align:left; color:var(--dim); font-weight:600; padding:4px 8px; border-bottom:1px solid var(--line); }
-  td { padding:4px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
-  code, .mono { font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:12px; }
-  .dim { color:var(--dim); }
-  .section { margin-bottom:22px; }
-  a { color:var(--accent); text-decoration:none; }
-  #refreshed { margin-left:auto; font-size:11px; color:var(--dim); }
-</style></head><body>
-<header><h1>dev-flow-control</h1><span class="sub" id="repoline"></span><span id="refreshed"></span></header>
-<nav>
-  <button data-tab="overview" class="active">Overview</button>
-  <button data-tab="dev">Development</button>
-  <button data-tab="sessions">Sessions</button>
-  <button data-tab="graph">Graph</button>
-</nav>
-<main id="main">Loading…</main>
-<script>
-let state = null, tab = 'overview';
-const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-const pill = (s) => '<span class="pill ' + s + '">' + s.toUpperCase() + '</span>';
-const ts = (s) => s ? esc(String(s).replace('T',' ').slice(0,19)) : '';
-const age = (s) => {
-  const t = Date.parse(String(s ?? ''));
-  if (!Number.isFinite(t)) return '';
-  const d = Math.max(0, Math.floor((Date.now() - t) / 86400000));
-  return d === 0 ? '<1d' : d + 'd';
-};
-const kv = (obj) => Object.entries(obj || {}).map(([k,v]) => esc(k) + ': <b>' + esc(v) + '</b>').join(' · ') || '<span class="dim">none</span>';
-
-function renderOverview() {
-  const h = state.health.map(c =>
-    '<div class="card"><h3>' + esc(c.name) + '</h3>' + pill(c.status) +
-    ' <span class="dim">' + esc(c.detail) + '</span></div>').join('');
-  const r = state.repo;
-  const g = state.graph;
-  return '<div class="section"><div class="cards">' +
-    '<div class="card"><h3>Repository</h3><div class="mono">' + esc(r.root) + '</div>' +
-    '<div>branch <b>' + esc(r.branch) + '</b> · ' + r.dirty_files + ' dirty</div>' +
-    '<div class="dim mono">' + esc(r.head) + '</div></div>' +
-    '<div class="card"><h3>Repo graph</h3>' + (g.present
-       ? g.nodes + ' nodes · ' + g.edges + ' edges<div class="dim">updated ' + ts(g.updated_at) + '</div>'
-       : '<span class="dim">absent — run /graphify</span>') + '</div>' +
-    h + '</div></div>';
+function readBody(req: IncomingMessage): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let body = "";
+    req.on("data", (chunk) => {
+      body += chunk;
+      if (body.length > 256 * 1024) reject(new Error("body too large"));
+    });
+    req.on("end", () => resolve(body));
+    req.on("error", reject);
+  });
 }
 
-function memTable(rows, cols) {
-  if (!rows || !rows.length) return '<div class="dim">none</div>';
-  return '<table><tr>' + cols.map(c => '<th>' + c + '</th>').join('') + '</tr>' +
-    rows.map(r => '<tr>' + cols.map(c => '<td>' + (c==='created_at'?ts(r[c]):esc(Array.isArray(r[c])?r[c].join(', '):r[c])) + '</td>').join('') + '</tr>').join('') + '</table>';
+function sendJson(res: ServerResponse, status: number, value: unknown): void {
+  res.writeHead(status, { "Content-Type": "application/json" }).end(JSON.stringify(value));
 }
-
-function renderMetrics(x) {
-  if (!x) return '';
-  const growth = Object.entries(x.memories || {}).map(([k,v]) =>
-    '<tr><td>' + esc(k) + '</td><td>' + v.last_7_days + '</td><td>' + v.last_30_days + '</td></tr>').join('');
-  const tools = (x.tool_activity.by_tool || []).map(t =>
-    '<tr><td class="mono">' + esc(t.tool_name) + '</td><td>' + t.count + '</td><td>' + t.ok + '</td><td>' + t.fail + '</td></tr>').join('');
-  return '<div class="card" style="margin-top:12px"><h3>Metrics (last ' + x.days + ' days)</h3>' +
-    '<div><b>Runs:</b> ' + x.runs.total + ' <span class="dim">(' + kv(x.runs.by_status) + ')</span></div>' +
-    '<div><b>Tasks:</b> ' + kv(x.tasks.by_status) +
-      (x.tasks.oldest_open_age_days != null ? ' <span class="dim">· oldest open ' + x.tasks.oldest_open_age_days + 'd</span>' : '') + '</div>' +
-    '<div><b>Blockers:</b> open <b>' + x.blockers.open + '</b> · resolved <b>' + x.blockers.resolved + '</b>' +
-      (x.blockers.oldest_open_age_days != null ? ' <span class="dim">· oldest open ' + x.blockers.oldest_open_age_days + 'd</span>' : '') + '</div>' +
-    '<div><b>Retrieval:</b> ' + x.retrieval.total + ' packs · ' + x.retrieval.last_7_days + ' last 7d' +
-      (x.retrieval.avg_estimated_tokens != null ? ' · avg ~' + x.retrieval.avg_estimated_tokens + ' tokens' : '') + '</div>' +
-    '<div><b>Stale:</b> ' + x.stale.open_tasks_over_14_days.count + ' tasks open &gt;14d · ' +
-      x.stale.open_blockers_over_7_days.count + ' blockers open &gt;7d</div>' +
-    '<h3 style="margin-top:10px">Memory growth</h3>' +
-    (growth ? '<table><tr><th>kind</th><th>7d</th><th>30d</th></tr>' + growth + '</table>' : '<div class="dim">none</div>') +
-    '<h3 style="margin-top:10px">Tool activity (' + x.tool_activity.total + ' events)</h3>' +
-    (tools ? '<table><tr><th>tool</th><th>count</th><th>ok</th><th>fail</th></tr>' + tools + '</table>' : '<div class="dim">none</div>') +
-    '</div>';
-}
-
-function renderDev() {
-  const m = state.memory;
-  let mem;
-  if (!m.available) {
-    mem = '<div class="card"><h3>Dev-memory (SurrealDB)</h3>' + pill('off') +
-          ' <span class="dim">' + esc(m.error || '') + '</span></div>';
-  } else {
-    const counts = Object.entries(m.counts).map(([k,v]) => k + ': <b>' + v + '</b>').join(' · ');
-    const tasks = (m.open_tasks || []).length
-      ? '<table><tr><th>goal</th><th>status</th><th>age</th></tr>' +
-        m.open_tasks.map(t => '<tr><td>' + esc(t.goal) + '</td><td>' + esc(t.status) + '</td><td>' + age(t.created_at) + '</td></tr>').join('') + '</table>'
-      : '<div class="dim">none</div>';
-    const blockers = (m.open_blockers || []).length
-      ? '<table><tr><th>blocker</th><th>age</th></tr>' +
-        m.open_blockers.map(b => '<tr><td>' + esc(b.text || b.summary) + '</td><td>' + age(b.created_at) + '</td></tr>').join('') + '</table>'
-      : '<div class="dim">none</div>';
-    mem = '<div class="card"><h3>Dev-memory (SurrealDB)</h3><div class="dim">' + counts + '</div>' +
-      '<h3 style="margin-top:10px">Open tasks</h3>' + tasks +
-      '<h3 style="margin-top:10px">Open blockers</h3>' + blockers +
-      '<h3 style="margin-top:10px">Recent decisions</h3>' + memTable(m.decisions, ['summary','source_agent','created_at']) +
-      '<h3 style="margin-top:10px">Recent evidence</h3>' + memTable(m.evidence, ['summary','source_agent','created_at']) +
-      '<h3 style="margin-top:10px">Recent lessons</h3>' + memTable(m.lessons, ['summary','source_agent','created_at']) +
-      '<h3 style="margin-top:10px">Recent repo facts</h3>' + memTable(m.repo_facts, ['summary','source_agent','created_at']) +
-      '<h3 style="margin-top:10px">Recent snippets</h3>' + memTable(m.snippets, ['summary','source_agent','created_at']) +
-      '<h3 style="margin-top:10px">Recent agent runs</h3>' + memTable(m.agent_runs, ['task_goal','status','source_agent','created_at']) +
-      '</div>' + renderMetrics(m.metrics);
-  }
-  const appr = state.approvals.length
-    ? '<table><tr><th>file</th><th>tool_pattern</th><th>expires</th></tr>' +
-      state.approvals.map(a => '<tr><td class="mono">' + esc(a.file) + '</td><td class="mono">' +
-        esc(a.tool_pattern) + '</td><td>' + esc(a.expires_at || '') + '</td></tr>').join('') + '</table>'
-    : '<div class="dim">no scoped approval records</div>';
-  return '<div class="section">' + mem +
-    '<div class="card" style="margin-top:12px"><h3>Scoped approvals (.agent-runs/approvals/)</h3>' + appr + '</div>' +
-    '<div class="card" style="margin-top:12px"><h3>Refresh memory</h3>' +
-    '<button onclick="load(true)" style="cursor:pointer">Query SurrealDB now</button> ' +
-    '<span class="dim">cached 60s otherwise</span></div></div>';
-}
-
-function renderSessions() {
-  const rows = state.sessions.map(s =>
-    '<tr><td class="mono">' + esc(s.id.slice(0,12)) + '</td><td>' + s.events + '</td>' +
-    '<td>' + ts(s.first) + '</td><td>' + ts(s.last) + '</td>' +
-    '<td class="mono">' + esc(s.top_tools) + '</td>' +
-    '<td>' + (s.verified ? pill('ok') : pill('warn')) + '</td>' +
-    '<td>' + (s.graph_scanned ? pill('ok') : pill('off')) + '</td></tr>').join('');
-  const ev = state.recent_events.map(e =>
-    '<tr><td class="dim">' + ts(e.timestamp) + '</td><td class="mono">' + esc(e.tool) + '</td>' +
-    '<td class="mono">' + esc((e.command || e.file || '').slice(0,90)) + '</td></tr>').join('');
-  return '<div class="section"><div class="card"><h3>Sessions (.agent-runs/sessions/)</h3>' +
-    (rows ? '<table><tr><th>id</th><th>events</th><th>first</th><th>last</th><th>top tools</th><th>verified</th><th>graph</th></tr>' + rows + '</table>'
-          : '<div class="dim">no hooked sessions yet — run claude with the plugin loaded</div>') + '</div>' +
-    '<div class="card" style="margin-top:12px"><h3>Recent tool events</h3>' +
-    (ev ? '<table><tr><th>time</th><th>tool</th><th>command/file</th></tr>' + ev + '</table>'
-        : '<div class="dim">none</div>') + '</div></div>';
-}
-
-function renderGraph() {
-  const g = state.graph;
-  if (!g.present) return '<div class="card"><span class="dim">No graphify-out/graph.json in this repo. Run /graphify first.</span></div>';
-  return '<div class="card"><h3>Repo graph</h3>' + g.nodes + ' nodes · ' + g.edges + ' edges · built at <code>' +
-    esc(g.built_at_commit) + '</code> · updated ' + ts(g.updated_at) +
-    (g.html ? '<div style="margin-top:8px"><a href="/gout/graph.html" target="_blank">Open interactive graph ↗</a></div>' : '') +
-    '</div>';
-}
-
-function render() {
-  if (!state) return;
-  document.getElementById('repoline').textContent =
-    state.repo.repo_id + ' · ' + state.repo.root;
-  document.getElementById('refreshed').textContent = 'updated ' + ts(state.generated_at);
-  const views = { overview: renderOverview, dev: renderDev, sessions: renderSessions, graph: renderGraph };
-  document.getElementById('main').innerHTML = views[tab]();
-}
-
-document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
-  tab = b.dataset.tab;
-  document.querySelectorAll('nav button').forEach(x => x.classList.toggle('active', x === b));
-  render();
-});
-
-async function load(fresh) {
-  try {
-    const res = await fetch('/api/state' + (fresh ? '?fresh=1' : ''));
-    state = await res.json();
-    render();
-  } catch (e) { document.getElementById('main').innerHTML = '<div class="card fail">dashboard server unreachable</div>'; }
-}
-load(false);
-setInterval(() => load(false), 5000);
-</script></body></html>`;
 
 // ---- Server ---------------------------------------------------------------------
 
@@ -559,30 +1082,62 @@ async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const repoRoot = repoRootFromArgs(args);
   const port = Number.parseInt(args.port || process.env.DFC_DASHBOARD_PORT || "4949", 10);
+  const uiDir = join(REPO_ROOT, "dashboard");
 
   const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
     try {
-      if (url.pathname === "/") {
-        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" }).end(PAGE);
+      if (url.pathname === "/" || url.pathname === "/index.html") {
+        const file = serveFile(uiDir, "index.html");
+        if (file) res.writeHead(200, { "Content-Type": file.type }).end(file.body);
+        else res.writeHead(500).end("dashboard/index.html missing");
       } else if (url.pathname === "/api/state") {
-        const state = await buildState(repoRoot, url.searchParams.get("fresh") === "1");
-        res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify(state));
+        sendJson(res, 200, await buildState(repoRoot, url.searchParams.get("fresh") === "1"));
+      } else if (url.pathname === "/api/agents" && req.method === "GET") {
+        sendJson(res, 200, { agents: serializeAgents() });
+      } else if (url.pathname === "/api/agents/launch" && req.method === "POST") {
+        const body = JSON.parse((await readBody(req)) || "{}") as
+          { prompt?: string; permission_mode?: string; tools?: AgentTools };
+        const prompt = String(body.prompt ?? "").trim();
+        if (!prompt) {
+          sendJson(res, 400, { error: "prompt required" });
+        } else {
+          const agent = launchAgent(
+            repoRoot, prompt.slice(0, 8000), String(body.permission_mode ?? "acceptEdits"), body.tools ?? {});
+          sendJson(res, 200, { id: agent.id, status: agent.status });
+        }
+      } else if (/^\/api\/agents\/[^/]+\/kill$/.test(url.pathname) && req.method === "POST") {
+        const id = url.pathname.split("/")[3];
+        const agent = spawnedAgents.get(id);
+        if (!agent) {
+          sendJson(res, 404, { error: "unknown agent" });
+        } else {
+          if (agent.proc && agent.status === "running") {
+            agent.status = "killed";
+            agent.ended_at = new Date().toISOString();
+            agent.proc.kill("SIGTERM");
+          }
+          sendJson(res, 200, { id, status: agent.status });
+        }
+      } else if (url.pathname === "/api/assistant" && req.method === "POST") {
+        const body = JSON.parse((await readBody(req)) || "{}") as { messages?: Array<{ role: string; content: string }> };
+        sendJson(res, 200, await handleAssistant(repoRoot, body));
       } else if (url.pathname.startsWith("/gout/")) {
-        const file = serveGraphifyFile(repoRoot, url.pathname.slice("/gout/".length));
+        const file = serveFile(join(repoRoot, "graphify-out"), url.pathname.slice("/gout/".length));
         if (file) res.writeHead(200, { "Content-Type": file.type }).end(file.body);
         else res.writeHead(404).end("not found");
       } else {
-        res.writeHead(404).end("not found");
+        const file = serveFile(uiDir, url.pathname.slice(1));
+        if (file) res.writeHead(200, { "Content-Type": file.type }).end(file.body);
+        else res.writeHead(404).end("not found");
       }
     } catch (err) {
-      res.writeHead(500, { "Content-Type": "application/json" })
-        .end(JSON.stringify({ error: (err as Error).message }));
+      sendJson(res, 500, { error: (err as Error).message });
     }
   });
 
   server.listen(port, "127.0.0.1", () => {
-    console.log(`dfc dashboard  →  http://127.0.0.1:${port}`);
+    console.log(`nox dashboard  →  http://127.0.0.1:${port}`);
     console.log(`repo root      →  ${repoRoot}`);
     console.log("Ctrl-C to stop.");
   });

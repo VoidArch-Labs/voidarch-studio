@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nox · dev-flow-control</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div class="aurora"></div>
+
+<header>
+  <div class="brand">
+    <h1>NOX</h1>
+    <span class="sub" id="repoline">connecting…</span>
+  </div>
+  <div class="chips" id="chips"></div>
+  <div class="head-actions">
+    <select id="jump" title="Jump to panel">
+      <option value="">Jump to…</option>
+      <option value="control">Control Room</option>
+      <option value="agents">Agents</option>
+      <option value="workflows">Workflows</option>
+      <option value="codemap">Code Map</option>
+      <option value="memory">Memory</option>
+      <option value="metrics">Metrics</option>
+      <option value="tokens">Tokens</option>
+      <option value="sync">Sync</option>
+      <option value="observability">Observability</option>
+      <option value="health">Health</option>
+    </select>
+    <button id="assistant-toggle" class="glow-btn">✦ Assistant</button>
+    <span id="refreshed"></span>
+  </div>
+</header>
+
+<main>
+  <details class="panel" id="control" open>
+    <summary><span class="dot dot-magenta"></span>Control Room<span class="hint" id="control-hint"></span></summary>
+    <div class="body" id="p-control">Loading…</div>
+  </details>
+
+  <details class="panel" id="agents" open>
+    <summary><span class="dot dot-teal"></span>Agents<span class="hint" id="agents-hint"></span></summary>
+    <div class="body">
+      <div class="launcher card">
+        <h3>Launch agent <span class="dim">headless <code>claude -p</code> · stream-json · logged to .agent-runs/dashboard-agents/</span></h3>
+        <textarea id="agent-prompt" rows="3" placeholder="Prompt for the agent, e.g. &quot;Run pnpm typecheck and summarize any errors&quot;"></textarea>
+        <div class="tools-grid">
+          <label>Workflow
+            <select id="tool-workflow" data-tool="workflow">
+              <option value="">(agent default)</option>
+              <option value="native">Native Workflow tool</option>
+              <option value="superpowers">Superpowers skills</option>
+              <option value="gsd">GSD skills</option>
+            </select>
+          </label>
+          <label>Subagents
+            <select id="tool-subagents" data-tool="subagents">
+              <option value="">(agent default)</option>
+              <option value="native-dynamic">Native · dynamic</option>
+              <option value="native-specific">Native · pinned model/effort</option>
+              <option value="antigravity-dynamic">Antigravity · dynamic</option>
+              <option value="antigravity-specific">Antigravity · pinned model</option>
+              <option value="codex">Codex</option>
+            </select>
+          </label>
+          <label id="tool-model-wrap" hidden>Model
+            <select id="tool-model" data-tool="model">
+              <option value="sonnet">sonnet</option>
+              <option value="opus">opus</option>
+              <option value="haiku">haiku</option>
+              <option value="fable">fable</option>
+            </select>
+          </label>
+          <label id="tool-effort-wrap" hidden>Effort
+            <select id="tool-effort" data-tool="effort">
+              <option value="low">low</option>
+              <option value="medium" selected>medium</option>
+              <option value="high">high</option>
+              <option value="max">max</option>
+            </select>
+          </label>
+          <label>Search
+            <select id="tool-search" data-tool="search">
+              <option value="">(agent default)</option>
+              <option value="native">Native WebSearch</option>
+              <option value="playwright">Playwright MCP</option>
+              <option value="firecrawl">Firecrawl MCP</option>
+            </select>
+          </label>
+          <label>Docs
+            <select id="tool-docs" data-tool="docs">
+              <option value="">(agent default)</option>
+              <option value="search">Web search</option>
+              <option value="context7">Context7 MCP</option>
+            </select>
+          </label>
+          <label>Git
+            <select id="tool-git" data-tool="git">
+              <option value="">(agent default)</option>
+              <option value="git-cli">Git CLI</option>
+              <option value="gitkraken">GitKraken MCP</option>
+            </select>
+          </label>
+        </div>
+        <div class="dim mono" id="tool-preview" style="margin:6px 0 2px; white-space:pre-wrap;"></div>
+        <div class="launch-row">
+          <select id="agent-mode">
+            <option value="acceptEdits">acceptEdits (default)</option>
+            <option value="plan">plan (read-only)</option>
+            <option value="default">default (prompts blocked headless)</option>
+          </select>
+          <button id="agent-launch" class="glow-btn">Deploy ▸</button>
+          <span id="agent-launch-msg" class="dim"></span>
+        </div>
+      </div>
+      <div id="p-agents"></div>
+    </div>
+  </details>
+
+  <details class="panel" id="workflows" open>
+    <summary><span class="dot dot-purple"></span>Workflows<span class="hint" id="workflows-hint"></span></summary>
+    <div class="body" id="p-workflows"></div>
+  </details>
+
+  <details class="panel" id="codemap" open>
+    <summary><span class="dot dot-teal"></span>Code Map<span class="hint" id="codemap-hint"></span></summary>
+    <div class="body">
+      <div class="graph-toolbar">
+        <input id="graph-search" placeholder="Search nodes (label or file)…">
+        <span id="graph-info" class="dim"></span>
+        <a id="graph-full" href="/gout/graph.html" target="_blank">full graphify view ↗</a>
+      </div>
+      <div class="graph-wrap">
+        <canvas id="graph-canvas"></canvas>
+        <div id="graph-card" class="graph-card" hidden></div>
+      </div>
+    </div>
+  </details>
+
+  <details class="panel" id="memory" open>
+    <summary><span class="dot dot-magenta"></span>Memory &amp; Retrieval<span class="hint" id="memory-hint"></span></summary>
+    <div class="body" id="p-memory"></div>
+  </details>
+
+  <details class="panel" id="metrics">
+    <summary><span class="dot dot-purple"></span>Metrics<span class="hint" id="metrics-hint"></span></summary>
+    <div class="body" id="p-metrics"></div>
+  </details>
+
+  <details class="panel" id="tokens" open>
+    <summary><span class="dot dot-teal"></span>Token Usage<span class="hint" id="tokens-hint"></span></summary>
+    <div class="body" id="p-tokens"></div>
+  </details>
+
+  <details class="panel" id="sync">
+    <summary><span class="dot dot-magenta"></span>Sync &amp; Backend<span class="hint" id="sync-hint"></span></summary>
+    <div class="body" id="p-sync"></div>
+  </details>
+
+  <details class="panel" id="observability">
+    <summary><span class="dot dot-purple"></span>Observability<span class="hint" id="observability-hint"></span></summary>
+    <div class="body" id="p-observability"></div>
+  </details>
+
+  <details class="panel" id="health">
+    <summary><span class="dot dot-teal"></span>Plugin Health<span class="hint" id="health-hint"></span></summary>
+    <div class="body" id="p-health"></div>
+  </details>
+</main>
+
+<aside id="assistant" class="assistant" hidden>
+  <div class="assistant-head">
+    <b>✦ Nox Assistant</b>
+    <span class="dim" id="assistant-model"></span>
+    <button id="assistant-close">×</button>
+  </div>
+  <div class="assistant-log" id="assistant-log">
+    <div class="a-msg a-assistant">Ask me about the repo, memory, agents, workflows, metrics, or tokens. I answer read-only, from the graph and dev-memory.</div>
+  </div>
+  <form class="assistant-input" id="assistant-form">
+    <input id="assistant-q" placeholder="e.g. what handles SurrealDB connections?" autocomplete="off">
+    <button class="glow-btn" type="submit">Ask</button>
+  </form>
+</aside>
+
+<script src="app.js"></script>
+</body>
+</html>

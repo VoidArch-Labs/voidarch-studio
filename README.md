@@ -321,25 +321,26 @@ Each documents its approval requirements; enabling any of them is opt-in.
 - `templates/approval.example.json` — the scoped approval-record shape (copy into `.agent-runs/approvals/`).
 - `templates/mcp.examples/` — copyable, opt-in MCP server snippets (see [MCP](#mcp-mcpjson)).
 
-## Per-repo dashboard
+## Nox dashboard (per-repo agent control room)
 
 ```bash
 pnpm dfc:dashboard --repo-root /path/to/repo     # http://127.0.0.1:4949 (or /dfc-dashboard in-session)
 ```
 
-Local-only (binds 127.0.0.1), read-only, no extra dependencies. Four tabs:
-
-- **Overview** — live health checks: plugin manifest, hook scripts present, `jq`, bundled
-  skills/agents counts, repo-graph freshness, `.agent-runs/` observability, dev-memory config.
-- **Development** — SurrealDB dev-memory (table counts; recent tasks, blockers, decisions,
-  evidence, lessons, snippets, repo facts, and agent runs; metrics summary;
-  60s cache + manual refresh) and scoped approval records.
-- **Sessions** — `.agent-runs/sessions/` per-session tool activity, verification and
-  graph-scan markers, recent tool events.
-- **Graph** — graphify node/edge counts and the interactive `graph.html`.
+Local-only (binds 127.0.0.1), no extra dependencies. Single-page aurora-dark control
+room with collapsible panels: **Control Room** (live agents + needs-attention),
+**Agents** (deploy headless `claude -p` runs with streamed output and a kill button,
+plus hooked-session history), **Workflows**, **Code Map** (interactive in-dashboard
+force graph with search/focus), **Memory & Retrieval**, **Metrics**, **Token Usage**
+(real per-model/per-day/per-session tokens from Claude Code transcripts + context-pack
+estimates), **Sync & Backend** (embedded/hosted, LOCK state), **Observability**, and
+**Plugin Health** — plus a **Mercury-powered read-only assistant** drawer that answers
+repo/system questions from the graph, dev-memory, and live state
+(`.dfc/mercury.env`, see below).
 
 Everything degrades gracefully: no SurrealDB creds → memory panel reads "off"; no graph →
-prompt to run `/graphify`; no `.agent-runs/` → appears after the first hooked session.
+prompt to run `/graphify`; no transcripts → tokens panel reads "off"; no Mercury key →
+assistant explains how to configure it. Full guide: [`docs/nox-dashboard.md`](docs/nox-dashboard.md).
 
 ## Installation — drop into any repo
 

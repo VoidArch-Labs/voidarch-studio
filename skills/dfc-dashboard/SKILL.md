@@ -1,5 +1,5 @@
 ---
-description: Start the per-repo dev-flow-control dashboard (local web UI with plugin health, sessions, dev-memory, and repo graph). Use only when explicitly invoked.
+description: Start the Nox dashboard (per-repo agent control room — agents, workflows, code map, memory, metrics, tokens, Mercury assistant). Use only when explicitly invoked.
 disable-model-invocation: true
 allowed-tools: Bash
 ---
@@ -10,9 +10,11 @@ Start the dashboard server for the active project in the background:
 
 Then:
 - report the URL it printed (default `http://127.0.0.1:4949`; override with `--port <n>`)
-- tell the user the four tabs: Overview (health checks), Development (dev-memory:
-  tasks/blockers/memories/metrics, approvals), Sessions (.agent-runs observability), Graph (graphify)
-- the server is local-only (binds 127.0.0.1) and read-only; stop it with
-  `kill $(lsof -ti :4949)` or by closing the terminal
+- tell the user it is the Nox control room: Control Room (live agents + needs-attention),
+  Agents (deploy headless `claude -p` runs, session history), Workflows, Code Map
+  (interactive graph), Memory, Metrics, Token Usage, Sync, Observability, Health, and the
+  Mercury assistant drawer (needs `MERCURY_API_KEY` in `.dfc/mercury.env`)
+- the server is local-only (binds 127.0.0.1); the only write surface is deploying
+  agents from the Agents panel; stop it with `kill $(lsof -ti :4949)` or by closing the terminal
 - if the port is already in use, the previous dashboard is probably still running —
   just report the URL
