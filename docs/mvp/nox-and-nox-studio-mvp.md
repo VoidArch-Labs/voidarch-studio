@@ -196,7 +196,8 @@ minimal Nox setup/status page (subset of dashboard, no Studio panels), query pla
 seed, memory lifecycle seed, npm-first packaging pass (`nox` bin alias).
 Tracking: [#11](https://github.com/pappdavid/dev-flow-control/issues/11),
 [#12](https://github.com/pappdavid/dev-flow-control/issues/12),
-[#16](https://github.com/pappdavid/dev-flow-control/issues/16) + Part 2 tracking issue.
+[#16](https://github.com/pappdavid/dev-flow-control/issues/16); tracking issue
+[#18](https://github.com/pappdavid/dev-flow-control/issues/18).
 
 ### Part 3 — Nox Studio module framework
 
@@ -207,7 +208,8 @@ Tracking: [#9](https://github.com/pappdavid/dev-flow-control/issues/9),
 [#10](https://github.com/pappdavid/dev-flow-control/issues/10),
 [#13](https://github.com/pappdavid/dev-flow-control/issues/13),
 [#14](https://github.com/pappdavid/dev-flow-control/issues/14),
-[#15](https://github.com/pappdavid/dev-flow-control/issues/15) + Part 3 tracking issue.
+[#15](https://github.com/pappdavid/dev-flow-control/issues/15); tracking issue
+[#19](https://github.com/pappdavid/dev-flow-control/issues/19).
 
 ## Consolidation record (2026-07-05)
 
