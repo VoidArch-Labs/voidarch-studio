@@ -14,7 +14,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { RecordId, type Surreal } from "surrealdb";
 import { batchesOf, sizeFromEnv, upsertBatches } from "./batch.js";
-import { queryResult, queryResults } from "./surreal.js";
+import { ftSearchTerms, queryResult, queryResults } from "./surreal.js";
 import { detectRiskTerms, estimateTokens, scoreDocChunk, tokenize } from "./scoring.js";
 import type {
   ContextDocChunkEntry,
@@ -424,13 +424,15 @@ export async function queryDocChunks(
   const keyOf = (r: DocChunkRow) => `${r.source_path}#${r.chunk_index}`;
 
   if (terms.length) {
-    const ftRows = await queryResult<DocChunkRow[]>(
+    const ftRows = await ftSearchTerms<DocChunkRow>(
       db,
       `SELECT source_path, source_title, heading, chunk_index, text, summary, search::score(0) AS ftScore
        FROM doc_chunk WHERE repo_id = $repo AND text @0@ $q ORDER BY ftScore DESC LIMIT 40`,
-      { repo: repoId, q: terms.join(" ") },
+      { repo: repoId },
+      terms,
+      keyOf,
     );
-    for (const r of ftRows) map.set(keyOf(r), { ...r, ftScore: r.ftScore ?? 0 });
+    for (const r of ftRows) map.set(keyOf(r), r);
   }
 
   for (const t of terms) {

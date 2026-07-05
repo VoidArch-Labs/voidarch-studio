@@ -14,7 +14,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Table, type Surreal } from "surrealdb";
-import { queryResult, queryResults } from "./surreal.js";
+import { ftSearchTerms, queryResult, queryResults } from "./surreal.js";
 import { detectRiskTerms, scoreGraphNode, tokenize } from "./scoring.js";
 import type {
   ContextGraphEdgeEntry,
@@ -323,13 +323,15 @@ export async function queryGraphNodes(
 ): Promise<GraphNodeHit[]> {
   const map = new Map<string, GraphNodeRow>();
   if (terms.length) {
-    const ftRows = await queryResult<GraphNodeRow[]>(
+    const ftRows = await ftSearchTerms<GraphNodeRow>(
       db,
       `SELECT node_key, label, norm_label, kind, source_file, source_location, degree, search::score(0) AS ftScore
        FROM graph_node WHERE repo_id = $repo AND search_text @0@ $q ORDER BY ftScore DESC LIMIT 30`,
-      { repo: repoId, q: terms.join(" ") },
+      { repo: repoId },
+      terms,
+      (r) => String(r.node_key ?? ""),
     );
-    for (const r of ftRows) if (r.node_key) map.set(r.node_key, { ...r, ftScore: r.ftScore ?? 0 });
+    for (const r of ftRows) if (r.node_key) map.set(r.node_key, r);
   }
   for (const t of terms) {
     const rows = await queryResult<GraphNodeRow[]>(

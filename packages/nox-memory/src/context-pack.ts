@@ -28,7 +28,7 @@ import {
   scoreToolEvent,
   tokenize,
 } from "./scoring.js";
-import { queryResult } from "./surreal.js";
+import { ftSearchTerms, queryResult } from "./surreal.js";
 import { queryDocChunks } from "./docs.js";
 import { neighborhoodEdges, queryGraphNodes } from "./graph.js";
 import { queryVectors, resolveEmbedConfig } from "./vectors.js";
@@ -426,15 +426,17 @@ export async function buildContextPack(
   const fileMap = new Map<string, FileRow>();
 
   if (terms.length) {
-    const ftRows = await queryResult<FileRow[]>(
+    const ftRows = await ftSearchTerms<FileRow>(
       db,
       `SELECT path, ext, size, content, search::score(0) AS ftScore FROM file
        WHERE repo_id = $repo AND content @0@ $q
        ORDER BY ftScore DESC LIMIT 20`,
-      { repo: repoId, q: terms.join(" ") },
+      { repo: repoId },
+      terms,
+      (r) => r.path,
     );
     for (const r of ftRows) {
-      fileMap.set(r.path, { ...r, ftScore: r.ftScore ?? 0 });
+      fileMap.set(r.path, r);
     }
   }
 

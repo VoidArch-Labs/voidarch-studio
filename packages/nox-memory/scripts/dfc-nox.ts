@@ -12,7 +12,7 @@ import { parseArgs, repoRootFromArgs } from "../src/cli.js";
 import { buildContextPack } from "../src/context-pack.js";
 import { queryDocChunks } from "../src/docs.js";
 import { tokenize } from "../src/scoring.js";
-import { loadConfig, queryResult, PKG_ROOT, withDb } from "../src/surreal.js";
+import { ftSearchTerms, loadConfig, queryResult, PKG_ROOT, withDb } from "../src/surreal.js";
 import { listEmbeddingModels, resolveEmbedConfig } from "../src/vectors.js";
 
 process.env.DFC_SURREAL_CONNECT_TIMEOUT_MS ??= "8000";
@@ -171,12 +171,14 @@ async function search(repoRoot: string, q: string): Promise<Record<string, unkno
 
   return await withDb(async (db, cfg) => {
     const docs = await queryDocChunks(db, cfg.repoId, q, 8).catch(() => []);
-    const files = await queryResult<Array<{ path?: string; ext?: string; size?: number; content?: string; ftScore?: number }>>(
+    const files = await ftSearchTerms<{ path?: string; ext?: string; size?: number; content?: string; ftScore?: number }>(
       db,
       `SELECT path, ext, size, content, search::score(0) AS ftScore FROM file
        WHERE repo_id = $repo AND content @0@ $q
        ORDER BY ftScore DESC LIMIT 8`,
-      { repo: cfg.repoId, q: terms.join(" ") },
+      { repo: cfg.repoId },
+      terms,
+      (r) => String(r.path ?? ""),
     ).catch(() => []);
 
     const memories: Array<Record<string, unknown>> = [];

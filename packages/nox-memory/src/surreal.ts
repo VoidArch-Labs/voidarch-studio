@@ -224,6 +224,56 @@ export async function createClient(cfg: DfcConfig): Promise<Surreal> {
   return new Surreal({ engines: createNodeEngines() });
 }
 
+/** SurrealDB FULLTEXT `@0@` ANDs every token in the query string, so joining
+ *  all task terms into one query returns zero rows whenever any single term is
+ *  missing from a document. Run the query once per term (OR semantics), merge
+ *  rows by key, and sum BM25 scores. `sql` must bind the term as `$q`. */
+export async function ftSearchTerms<T extends { ftScore?: number }>(
+  db: Surreal,
+  sql: string,
+  bindings: Record<string, unknown>,
+  terms: string[],
+  keyOf: (row: T) => string,
+): Promise<T[]> {
+  const map = new Map<string, T>();
+  for (const q of terms) {
+    const rows = await queryResult<T[]>(db, sql, { ...bindings, q });
+    for (const r of rows) {
+      const k = keyOf(r);
+      const prev = map.get(k);
+      if (prev) prev.ftScore = (prev.ftScore ?? 0) + (r.ftScore ?? 0);
+      else map.set(k, { ...r, ftScore: r.ftScore ?? 0 });
+    }
+  }
+  return Array.from(map.values()).sort((a, b) => (b.ftScore ?? 0) - (a.ftScore ?? 0));
+}
+
+/** Ordered schema migrations — shared with scripts/dfc-db-migrate.ts. */
+export const MIGRATIONS = [
+  "schema/0001_core.surql",
+  "schema/0002_indexes.surql",
+  "schema/0003_documents_graph_vectors.surql",
+  "schema/0004_state_memory_kinds.surql",
+  "schema/0005_task_note.surql",
+];
+
+let schemaEnsured = false;
+
+/** Fresh embedded DBs (the keyless default) have no schema until a migrate runs.
+ *  Probe once per process and auto-apply migrations so `nox init && nox ingest`
+ *  works in a repo that has never run `nox db migrate`. Embedded-only: remote
+ *  servers are managed explicitly via the migrate command. */
+async function ensureSchema(db: Surreal): Promise<void> {
+  if (schemaEnsured) return;
+  const info = await queryResult<{ tables?: Record<string, unknown> }>(db, "INFO FOR DB");
+  if (!info?.tables?.file) {
+    for (const rel of MIGRATIONS) {
+      await queryResults(db, readFileSync(join(PKG_ROOT, rel), "utf8"));
+    }
+  }
+  schemaEnsured = true;
+}
+
 export async function connect(cfg: DfcConfig): Promise<Surreal> {
   const embedded = isEmbeddedUrl(cfg.url);
   const timeoutMs = numberEnv(
@@ -239,6 +289,7 @@ export async function connect(cfg: DfcConfig): Promise<Surreal> {
       await withTimeout("SurrealDB connect", db.connect(cfg.url), timeoutMs);
       if (!embedded) await withTimeout("SurrealDB signin", authenticate(db, cfg), timeoutMs);
       await withTimeout("SurrealDB use", db.use({ namespace: cfg.namespace, database: cfg.database }), timeoutMs);
+      if (embedded) await ensureSchema(db);
       return db;
     } catch (err) {
       lastError = err;
