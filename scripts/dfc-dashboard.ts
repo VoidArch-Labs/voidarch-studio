@@ -14,7 +14,7 @@
 //   POST /api/assistant       Mercury (OpenAI-compatible) read-only repo assistant
 
 import { type ChildProcess, execFileSync, spawn } from "node:child_process";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { createServer } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
@@ -30,6 +30,7 @@ import {
   queryResult,
   withDb,
 } from "../src/memory/surreal.js";
+import { embedChunks, gatherDbTargets, listEmbeddingModels, queryVectors, resolveEmbedConfig } from "../src/memory/vectors.js";
 
 // Short timeouts for an interactive dashboard (only if the user has not overridden).
 process.env.DFC_SURREAL_CONNECT_TIMEOUT_MS ??= "8000";
@@ -570,7 +571,163 @@ async function collectMemory(repoRoot: string, fresh: boolean): Promise<MemoryPa
   return value;
 }
 
-// ---- Spawned agents (headless `claude -p` runs launched from the dashboard) --------
+// ---- Providers (headless CLI registry) ---------------------------------------------
+
+interface ProviderDef {
+  cmd: string;
+  models: string[]; // first = default
+  efforts: string[]; // empty = no effort control
+  stream: "claude-json" | "plain";
+  /** Build argv. systemPrompt is a routing preamble; providers without an
+   *  append-system-prompt flag get it prepended to the prompt text. */
+  buildArgs(o: { prompt: string; model?: string; effort?: string; mode: string; systemPrompt?: string }): string[];
+}
+
+const PROVIDERS: Record<string, ProviderDef> = {
+  claude: {
+    cmd: "claude",
+    models: ["fable", "opus", "sonnet", "haiku"],
+    efforts: ["low", "medium", "high"],
+    stream: "claude-json",
+    buildArgs: (o) => [
+      "-p", o.prompt, "--output-format", "stream-json", "--verbose", "--permission-mode", o.mode,
+      ...(o.model ? ["--model", o.model] : []),
+      ...(o.effort ? ["--effort", o.effort] : []),
+      ...(o.systemPrompt ? ["--append-system-prompt", o.systemPrompt] : []),
+    ],
+  },
+  codex: {
+    cmd: "codex",
+    models: ["gpt-5.5-codex", "gpt-5.5"],
+    efforts: ["low", "medium", "high"],
+    stream: "plain",
+    buildArgs: (o) => [
+      "exec",
+      ...(o.model ? ["-m", o.model] : []),
+      ...(o.effort ? ["-c", `model_reasoning_effort="${o.effort}"`] : []),
+      o.systemPrompt ? `${o.systemPrompt}\n\n${o.prompt}` : o.prompt,
+    ],
+  },
+  grok: {
+    cmd: "grok",
+    models: ["composer-2.5"],
+    efforts: [],
+    stream: "plain",
+    buildArgs: (o) => [
+      "-p", o.systemPrompt ? `${o.systemPrompt}\n\n${o.prompt}` : o.prompt,
+      ...(o.model ? ["-m", o.model] : []),
+    ],
+  },
+  gemini: {
+    cmd: "gemini",
+    models: ["gemini-3.5-flash", "gemini-3.1-pro"],
+    efforts: [],
+    stream: "plain",
+    buildArgs: (o) => [
+      "-p", o.systemPrompt ? `${o.systemPrompt}\n\n${o.prompt}` : o.prompt,
+      ...(o.model ? ["-m", o.model] : []),
+    ],
+  },
+  copilot: {
+    cmd: "copilot",
+    models: ["default", "gpt-5.5"],
+    efforts: [],
+    stream: "plain",
+    buildArgs: (o) => [
+      "-p", o.systemPrompt ? `${o.systemPrompt}\n\n${o.prompt}` : o.prompt,
+      ...(o.model && o.model !== "default" ? ["--model", o.model] : []),
+    ],
+  },
+};
+
+/** Sanitize a provider/model/effort triple against the registry. */
+function resolveProvider(provider?: string, model?: string, effort?: string): { provider: string; model?: string; effort?: string } {
+  const p = PROVIDERS[provider ?? ""] ? String(provider) : "claude";
+  const def = PROVIDERS[p];
+  const m = model && def.models.includes(model) ? model : undefined;
+  const e = effort && def.efforts.includes(effort) ? effort : undefined;
+  return { provider: p, model: m, effort: e };
+}
+
+// ---- Nox defaults (.dfc/nox.env — default provider/model/effort + routing) -----------
+
+interface NoxDefaults {
+  provider: string;
+  model: string;
+  effort: string;
+  assistant_rounds: number;
+  routes: { workflow: string; subagents: string; search: string; docs: string; git: string };
+}
+
+function loadNoxDefaults(repoRoot: string): NoxDefaults {
+  const fileEnv = {
+    ...parseEnvFile(join(REPO_ROOT, ".dfc", "nox.env")),
+    ...parseEnvFile(join(repoRoot, ".dfc", "nox.env")),
+  };
+  const get = (k: string, d: string): string => (process.env[k] ?? fileEnv[k] ?? d).trim() || d;
+  return {
+    provider: get("NOX_DEFAULT_PROVIDER", "claude"),
+    model: get("NOX_DEFAULT_MODEL", "fable"),
+    effort: get("NOX_DEFAULT_EFFORT", "medium"),
+    assistant_rounds: Number.parseInt(get("NOX_ASSISTANT_ROUNDS", "10"), 10) || 10,
+    routes: {
+      workflow: get("NOX_ROUTE_WORKFLOW", "native"),
+      subagents: get("NOX_ROUTE_SUBAGENTS", "native-dynamic"),
+      search: get("NOX_ROUTE_SEARCH", "firecrawl"),
+      docs: get("NOX_ROUTE_DOCS", "context7"),
+      git: get("NOX_ROUTE_GIT", "git-cli"),
+    },
+  };
+}
+
+// ---- Config read/write (gitignored .dfc/*.env, whitelisted keys) ---------------------
+
+const CONFIG_FILES: Record<string, string[]> = {
+  mercury: ["MERCURY_API_KEY", "MERCURY_BASE_URL", "MERCURY_MODEL"],
+  embed: ["DFC_EMBED_PROVIDER", "DFC_EMBED_MODEL", "DFC_EMBED_DIMENSION", "DFC_EMBED_APPROVED", "OPENAI_API_KEY"],
+  nox: [
+    "NOX_DEFAULT_PROVIDER", "NOX_DEFAULT_MODEL", "NOX_DEFAULT_EFFORT", "NOX_ASSISTANT_ROUNDS",
+    "NOX_ROUTE_WORKFLOW", "NOX_ROUTE_SUBAGENTS", "NOX_ROUTE_SEARCH", "NOX_ROUTE_DOCS", "NOX_ROUTE_GIT",
+  ],
+};
+
+function writeConfigFile(repoRoot: string, file: string, values: Record<string, string>): { saved: string[] } {
+  const allowed = CONFIG_FILES[file];
+  if (!allowed) throw new Error(`unknown config file: ${file}`);
+  const path = join(repoRoot, ".dfc", `${file}.env`);
+  const current = parseEnvFile(path);
+  const saved: string[] = [];
+  for (const [k, v] of Object.entries(values)) {
+    if (!allowed.includes(k)) continue;
+    const val = String(v).trim();
+    if (!val) continue; // blank = keep existing (so masked key fields don't wipe keys)
+    current[k] = val;
+    saved.push(k);
+  }
+  mkdirSync(join(repoRoot, ".dfc"), { recursive: true });
+  const body = `# Managed by the Nox dashboard config page. Gitignored — never commit.\n${
+    Object.entries(current).map(([k, v]) => `${k}=${v}`).join("\n")}\n`;
+  writeFileSync(path, body);
+  return { saved };
+}
+
+/** Config snapshot for the UI — presence booleans only, never key values. */
+function collectConfig(repoRoot: string): Record<string, unknown> {
+  const mercury = loadMercuryConfig(repoRoot);
+  const embed = resolveEmbedConfig({ repoRoot });
+  const defaults = loadNoxDefaults(repoRoot);
+  return {
+    mercury: { configured: Boolean(mercury.key), base_url: mercury.baseUrl, model: mercury.model },
+    embed: {
+      provider: embed.provider, model: embed.model, dimension: embed.dimension,
+      approved: embed.approved, key_present: embed.apiKeyPresent, available: embed.available, reason: embed.reason,
+    },
+    defaults,
+    providers: Object.fromEntries(Object.entries(PROVIDERS).map(([k, p]) => [k, { models: p.models, efforts: p.efforts }])),
+  };
+}
+
+// ---- Spawned agents (headless CLI runs launched from the dashboard) ------------------
 
 /** Tool-routing config chosen in the launcher; composed into --append-system-prompt. */
 interface AgentTools {
@@ -630,6 +787,10 @@ interface SpawnedAgent {
   permission_mode: string;
   tools?: AgentTools;
   system_prompt?: string;
+  provider?: string; // claude | codex | grok | gemini | copilot
+  model?: string;
+  effort?: string;
+  purpose?: string; // "verify" forces claude/haiku
   workflow?: string; // set when launched from a workflow card
   resumed_from?: string; // session_id this run resumed
   status: "running" | "done" | "failed" | "killed";
@@ -691,10 +852,19 @@ interface LaunchOptions {
   tools?: AgentTools;
   workflow?: string;
   resumeSessionId?: string;
+  provider?: string;
+  model?: string;
+  effort?: string;
+  purpose?: string; // "verify" → forced claude/haiku
 }
 
 function launchAgent(repoRoot: string, prompt: string, permissionMode: string, opts: LaunchOptions = {}): SpawnedAgent {
   const tools = opts.tools ?? {};
+  // Testing/verification agents MUST run on Haiku, never Fable.
+  const wanted = opts.purpose === "verify"
+    ? { provider: "claude", model: "haiku", effort: opts.effort }
+    : resolveProvider(opts.provider, opts.model, opts.effort);
+  const def = PROVIDERS[wanted.provider];
   const id = `${new Date().toISOString().replace(/[:.]/g, "-")}-${Math.random().toString(36).slice(2, 7)}`;
   const mode = ALLOWED_PERMISSION_MODES.has(permissionMode) ? permissionMode : "acceptEdits";
   const systemPrompt = buildAgentSystemPrompt(tools);
@@ -706,6 +876,7 @@ function launchAgent(repoRoot: string, prompt: string, permissionMode: string, o
   }
   const agent: SpawnedAgent = {
     id, prompt, permission_mode: mode, tools, system_prompt: systemPrompt,
+    provider: wanted.provider, model: wanted.model, effort: wanted.effort, purpose: opts.purpose,
     workflow: opts.workflow, resumed_from: opts.resumeSessionId, status: "running",
     started_at: new Date().toISOString(), lines: [],
   };
@@ -714,13 +885,14 @@ function launchAgent(repoRoot: string, prompt: string, permissionMode: string, o
   try {
     appendFileSync(logPath, `${JSON.stringify({
       type: "dfc_meta", id, prompt, permission_mode: mode, tools,
+      provider: wanted.provider, model: wanted.model, effort: wanted.effort, purpose: opts.purpose,
       workflow: opts.workflow, resumed_from: opts.resumeSessionId, started_at: agent.started_at,
     })}\n`);
   } catch { /* history is best-effort */ }
-  const argv = ["-p", prompt, "--output-format", "stream-json", "--verbose", "--permission-mode", mode];
-  if (opts.resumeSessionId) argv.push("--resume", opts.resumeSessionId);
-  if (systemPrompt) argv.push("--append-system-prompt", systemPrompt);
-  const proc = spawn("claude", argv, { cwd: repoRoot, env, stdio: ["ignore", "pipe", "pipe"] });
+  const argv = def.buildArgs({ prompt, model: wanted.model, effort: wanted.effort, mode, systemPrompt });
+  if (wanted.provider === "claude" && opts.resumeSessionId) argv.push("--resume", opts.resumeSessionId);
+  const plainTail: string[] = [];
+  const proc = spawn(def.cmd, argv, { cwd: repoRoot, env, stdio: ["ignore", "pipe", "pipe"] });
   agent.proc = proc;
   let buffer = "";
   proc.stdout?.on("data", (chunk: Buffer) => {
@@ -734,6 +906,12 @@ function launchAgent(repoRoot: string, prompt: string, permissionMode: string, o
       try {
         appendFileSync(logPath, `${line}\n`);
       } catch { /* logging must never kill the run */ }
+      if (def.stream === "plain") {
+        pushLine(agent, line.slice(0, 200));
+        plainTail.push(line);
+        if (plainTail.length > 40) plainTail.shift();
+        continue;
+      }
       try {
         const evt = JSON.parse(line) as Record<string, unknown>;
         if (!agent.session_id && typeof evt.session_id === "string") agent.session_id = evt.session_id;
@@ -764,6 +942,10 @@ function launchAgent(repoRoot: string, prompt: string, permissionMode: string, o
     if (agent.status === "running") agent.status = code === 0 ? "done" : "failed";
     agent.exit_code = code;
     agent.ended_at = new Date().toISOString();
+    agent.duration_ms ??= Date.now() - Date.parse(agent.started_at);
+    if (def.stream === "plain" && !agent.result && plainTail.length) {
+      agent.result = plainTail.join("\n").slice(-4000);
+    }
     agent.proc = undefined;
   });
   spawnedAgents.set(id, agent);
@@ -787,6 +969,10 @@ function loadHistoricalAgents(repoRoot: string): SpawnedAgent[] {
         agent.prompt = String(evt.prompt ?? agent.prompt);
         agent.permission_mode = String(evt.permission_mode ?? "?");
         agent.tools = evt.tools as AgentTools | undefined;
+        agent.provider = evt.provider ? String(evt.provider) : undefined;
+        agent.model = evt.model ? String(evt.model) : undefined;
+        agent.effort = evt.effort ? String(evt.effort) : undefined;
+        agent.purpose = evt.purpose ? String(evt.purpose) : undefined;
         agent.workflow = evt.workflow ? String(evt.workflow) : undefined;
         agent.resumed_from = evt.resumed_from ? String(evt.resumed_from) : undefined;
         agent.started_at = String(evt.started_at ?? "");
@@ -893,10 +1079,103 @@ async function nodeDetail(repoRoot: string, nodeId: string): Promise<Record<stri
         .slice(0, 12).map((n) => ({ id: n.id, label: n.label }))
     : [];
   const related = await toolSearchMemory(repoRoot, String(node.label ?? nodeId));
+  // Vector hits for this node (only when an embedding provider is live).
+  let vectors: unknown[] = [];
+  const embedCfg = resolveEmbedConfig({ repoRoot });
+  if (embedCfg.available && memoryConfigured(repoRoot)) {
+    try {
+      vectors = await withDbSerial(
+        (db, c) => queryVectors(db, embedCfg, c.repoId, `${node.label} ${sourceFile}`, 5),
+        repoRoot,
+      );
+    } catch { /* vectors are optional garnish */ }
+  }
   return {
     node: { id: node.id, label: node.label, file_type: node.file_type, community: node.community, origin: node._origin },
-    file, siblings, inbound, outbound, related,
+    file, siblings, inbound, outbound, related, vectors,
   };
+}
+
+// ---- Vectors panel (embedding status + per-file coverage) -----------------------------
+
+async function collectVectors(repoRoot: string): Promise<Record<string, unknown>> {
+  const cfg = resolveEmbedConfig({ repoRoot });
+  const status = {
+    provider: cfg.provider, model: cfg.model, model_key: cfg.modelKey, dimension: cfg.dimension,
+    approved: cfg.approved, key_present: cfg.apiKeyPresent, available: cfg.available, reason: cfg.reason,
+  };
+  if (!memoryConfigured(repoRoot)) return { status, error: "dev-memory not configured" };
+  try {
+    return await withDbSerial(async (db, c) => {
+      const chunks = await queryResult<Array<{ source_path?: string; content_hash?: string }>>(
+        db, "SELECT source_path, content_hash FROM doc_chunk WHERE repo_id = $repo LIMIT 5000", { repo: c.repoId });
+      const embedded = await queryResult<Array<{ content_hash?: string }>>(
+        db, "SELECT content_hash FROM embedding_chunk WHERE repo_id = $repo AND embedding_model = $m LIMIT 10000",
+        { repo: c.repoId, m: cfg.modelKey });
+      const have = new Set(embedded.map((e) => String(e.content_hash)));
+      const byFile = new Map<string, { chunks: number; embedded: number }>();
+      for (const ch of chunks) {
+        const f = byFile.get(String(ch.source_path)) ?? { chunks: 0, embedded: 0 };
+        f.chunks++;
+        if (have.has(String(ch.content_hash))) f.embedded++;
+        byFile.set(String(ch.source_path), f);
+      }
+      const files = [...byFile.entries()]
+        .map(([path, f]) => ({ path, ...f, pending: f.chunks - f.embedded }))
+        .sort((a, b) => b.pending - a.pending || b.chunks - a.chunks);
+      const models = await listEmbeddingModels(db, c.repoId);
+      return {
+        status,
+        totals: { chunks: chunks.length, embedded: have.size, pending: chunks.length - files.reduce((s, f) => s + f.embedded, 0) },
+        files: files.slice(0, 40),
+        models: models.map((m) => ({ provider: m.provider, model: m.model, dimension: m.dimension, updated_at: m.updated_at })),
+      };
+    }, repoRoot);
+  } catch (err) {
+    return { status, error: (err as Error).message };
+  }
+}
+
+async function embedPending(repoRoot: string): Promise<Record<string, unknown>> {
+  const cfg = resolveEmbedConfig({ repoRoot });
+  if (!cfg.available) return { error: `embedding unavailable: ${cfg.reason}` };
+  if (!memoryConfigured(repoRoot)) return { error: "dev-memory not configured" };
+  try {
+    return await withDbSerial(async (db, c) => {
+      const targets = await gatherDbTargets(db, c.repoId, cfg.modelKey, 500);
+      if (!targets.length) return { embedded: 0, skipped: 0, errors: 0, note: "nothing pending" };
+      return { ...(await embedChunks(db, cfg, c.repoId, targets)) } as Record<string, unknown>;
+    }, repoRoot);
+  } catch (err) {
+    return { error: (err as Error).message };
+  }
+}
+
+// ---- Tasks (expandable todo detail) ---------------------------------------------------
+
+async function collectTasks(repoRoot: string): Promise<Array<Record<string, unknown>>> {
+  if (!memoryConfigured(repoRoot)) return [];
+  try {
+    return await withDbSerial(async (db, c) => {
+      const tasks = await queryResult<Array<Record<string, unknown>>>(
+        db,
+        `SELECT goal, status, tags, source_agent, created_at, updated_at, done_at FROM task
+         WHERE repo_id = $repo ORDER BY created_at DESC LIMIT 30`,
+        { repo: c.repoId },
+      );
+      const blockers = await queryResult<Array<Record<string, unknown>>>(
+        db,
+        "SELECT text, summary, status, task_goal, created_at FROM blocker WHERE repo_id = $repo LIMIT 50",
+        { repo: c.repoId },
+      );
+      return tasks.map((t) => ({
+        ...t,
+        blockers: blockers.filter((b) => b.task_goal && b.task_goal === t.goal),
+      }));
+    }, repoRoot);
+  } catch {
+    return [];
+  }
 }
 
 // ---- Mercury assistant (OpenAI-compatible, read-only tools) -------------------------
@@ -1109,7 +1388,7 @@ async function handleAssistant(repoRoot: string, body: { messages?: Array<{ role
     ...history,
   ];
   const trace: Array<{ tool: string; args: unknown }> = [];
-  const MAX_ROUNDS = 6;
+  const MAX_ROUNDS = loadNoxDefaults(repoRoot).assistant_rounds;
   for (let round = 0; round < MAX_ROUNDS; round++) {
     // Last round: withhold tools so the model must synthesize an answer from
     // what it has gathered instead of looping on lookups forever.
@@ -1156,16 +1435,34 @@ async function handleAssistant(repoRoot: string, body: { messages?: Array<{ role
       });
     }
   }
-  return { error: "Assistant exceeded tool-call budget (6 rounds) without a final answer.", trace };
+  return { error: `Assistant exceeded tool-call budget (${MAX_ROUNDS} rounds) without a final answer.`, trace };
 }
 
 // ---- State assembly ------------------------------------------------------------
+
+let vectorsCache: { at: number; value: Record<string, unknown> } | undefined;
+let tasksCache: { at: number; value: Array<Record<string, unknown>> } | undefined;
+const VECTORS_TTL_MS = 60_000;
 
 async function buildState(repoRoot: string, fresh: boolean): Promise<Record<string, unknown>> {
   const cfg = loadConfig({ repoRoot });
   const dirty = git(repoRoot, "status", "--porcelain");
   const memory = await collectMemory(repoRoot, fresh);
+  if (fresh || !vectorsCache || Date.now() - vectorsCache.at > VECTORS_TTL_MS) {
+    const next = await collectVectors(repoRoot);
+    // Embedded SurrealKV connects time out intermittently — keep the last good snapshot.
+    if (!next.error || !vectorsCache || vectorsCache.value.error) vectorsCache = { at: Date.now(), value: next };
+    else vectorsCache.at = Date.now();
+  }
+  if (fresh || !tasksCache || Date.now() - tasksCache.at > VECTORS_TTL_MS) {
+    const next = await collectTasks(repoRoot);
+    if (next.length || !tasksCache) tasksCache = { at: Date.now(), value: next };
+    else tasksCache.at = Date.now();
+  }
   return {
+    config: collectConfig(repoRoot),
+    vectors: vectorsCache.value,
+    tasks: tasksCache.value,
     generated_at: new Date().toISOString(),
     repo: {
       root: repoRoot,
@@ -1256,7 +1553,7 @@ async function main(): Promise<void> {
           sendJson(res, 400, { error: "no recorded prompt to retry" });
         } else {
           const agent = launchAgent(repoRoot, src.prompt, src.permission_mode === "?" ? "acceptEdits" : src.permission_mode,
-            { tools: src.tools, workflow: src.workflow });
+            { tools: src.tools, workflow: src.workflow, provider: src.provider, model: src.model, effort: src.effort, purpose: src.purpose });
           sendJson(res, 200, { id: agent.id, status: agent.status });
         }
       } else if (/^\/api\/agents\/[^/]+\/resume$/.test(url.pathname) && req.method === "POST") {
@@ -1294,16 +1591,36 @@ async function main(): Promise<void> {
         }
       } else if (url.pathname === "/api/node" && req.method === "GET") {
         sendJson(res, 200, await nodeDetail(repoRoot, url.searchParams.get("id") ?? ""));
+      } else if (url.pathname === "/api/config" && req.method === "GET") {
+        sendJson(res, 200, collectConfig(repoRoot));
+      } else if (url.pathname === "/api/config" && req.method === "POST") {
+        const body = JSON.parse((await readBody(req)) || "{}") as { file?: string; values?: Record<string, string> };
+        try {
+          const result = writeConfigFile(repoRoot, String(body.file ?? ""), body.values ?? {});
+          vectorsCache = undefined; // config change may alter embed status
+          sendJson(res, 200, { ...result, config: collectConfig(repoRoot) });
+        } catch (err) {
+          sendJson(res, 400, { error: (err as Error).message });
+        }
+      } else if (url.pathname === "/api/vectors" && req.method === "GET") {
+        sendJson(res, 200, await collectVectors(repoRoot));
+      } else if (url.pathname === "/api/vectors/embed" && req.method === "POST") {
+        const result = await embedPending(repoRoot);
+        vectorsCache = undefined;
+        sendJson(res, result.error ? 400 : 200, result);
       } else if (url.pathname === "/api/agents/launch" && req.method === "POST") {
-        const body = JSON.parse((await readBody(req)) || "{}") as
-          { prompt?: string; permission_mode?: string; tools?: AgentTools };
+        const body = JSON.parse((await readBody(req)) || "{}") as {
+          prompt?: string; permission_mode?: string; tools?: AgentTools;
+          provider?: string; model?: string; effort?: string; purpose?: string;
+        };
         const prompt = String(body.prompt ?? "").trim();
         if (!prompt) {
           sendJson(res, 400, { error: "prompt required" });
         } else {
           const agent = launchAgent(
-            repoRoot, prompt.slice(0, 8000), String(body.permission_mode ?? "acceptEdits"), { tools: body.tools ?? {} });
-          sendJson(res, 200, { id: agent.id, status: agent.status });
+            repoRoot, prompt.slice(0, 8000), String(body.permission_mode ?? "acceptEdits"),
+            { tools: body.tools ?? {}, provider: body.provider, model: body.model, effort: body.effort, purpose: body.purpose });
+          sendJson(res, 200, { id: agent.id, status: agent.status, provider: agent.provider, model: agent.model, effort: agent.effort });
         }
       } else if (/^\/api\/agents\/[^/]+\/kill$/.test(url.pathname) && req.method === "POST") {
         const id = url.pathname.split("/")[3];

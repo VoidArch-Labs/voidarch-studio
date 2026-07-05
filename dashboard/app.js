@@ -124,6 +124,8 @@ const ui = {
   openResume: new Set(),
   openSession: null, sessionCache: {},
   openWorkflows: new Set(),
+  openTasks: new Set(),
+  configStamp: '',
 };
 
 function editingIn(el) {
@@ -139,6 +141,8 @@ function agentCard(a) {
   const logOpen = ui.openLogs.has(a.id);
   const resumeOpen = ui.openResume.has(a.id);
   const metrics = [
+    [a.provider, a.model, a.effort].filter(Boolean).join('/') || '',
+    a.purpose === 'verify' ? 'verify' : '',
     a.num_turns != null ? a.num_turns + ' turns' : '',
     fmtCost(a.cost_usd), fmtDur(a.duration_ms),
     a.session_id ? 'session ' + esc(a.session_id.slice(0, 8)) : '',
@@ -241,8 +245,9 @@ function renderAgents() {
 
   const compare = spawned.length > 1
     ? '<div class="card"><h3>Run comparison</h3>' +
-      table(spawned.slice(0, 12), ['run', 'workflow', 'status', 'turns', 'cost', 'duration', 'started'], {
+      table(spawned.slice(0, 12), ['run', 'agent', 'workflow', 'status', 'turns', 'cost', 'duration', 'started'], {
         run: (_, r) => '<span class="mono">' + esc(r.id.slice(11, 23)) + '</span>',
+        agent: (_, r) => '<span class="mono">' + esc([r.provider, r.model].filter(Boolean).join('/') || '—') + '</span>',
         workflow: (_, r) => esc(r.workflow || '—'),
         status: (_, r) => pill(r.status),
         turns: (_, r) => r.num_turns ?? '',
@@ -291,11 +296,61 @@ function renderAgents() {
 
 function gatherTools() {
   const t = {};
-  for (const sel of document.querySelectorAll('.tools-grid select')) {
+  for (const sel of document.querySelectorAll('.tools-grid select[data-tool]')) {
     if (sel.closest('label').hidden) continue;
     if (sel.value) t[sel.dataset.tool] = sel.value;
   }
   return t;
+}
+
+// ---- provider / model / effort pickers ------------------------------------------
+
+let launchPurpose = ''; // 'verify' → server enforces claude/haiku
+let pickersReady = false;
+
+function fillModelEffort() {
+  const providers = (state.config && state.config.providers) || {};
+  const p = providers[$('agent-provider').value] || { models: [], efforts: [] };
+  const fill = (sel, list) => {
+    const prev = sel.value;
+    sel.innerHTML = list.map((m) => '<option value="' + esc(m) + '">' + esc(m) + '</option>').join('');
+    if (list.includes(prev)) sel.value = prev;
+  };
+  fill($('agent-model'), p.models);
+  fill($('agent-effort'), p.efforts);
+  $('agent-effort-wrap').hidden = !p.efforts.length;
+}
+
+function initPickers() {
+  if (pickersReady || !state.config) return;
+  pickersReady = true;
+  const providers = state.config.providers || {};
+  const d = state.config.defaults || {};
+  $('agent-provider').innerHTML = Object.keys(providers).map((p) => '<option value="' + esc(p) + '">' + esc(p) + '</option>').join('');
+  if (providers[d.provider]) $('agent-provider').value = d.provider;
+  fillModelEffort();
+  if ((providers[d.provider] || { models: [] }).models.includes(d.model)) $('agent-model').value = d.model;
+  if ((providers[d.provider] || { efforts: [] }).efforts.includes(d.effort)) $('agent-effort').value = d.effort;
+  // Opinionated routing defaults from config (user can still change per launch).
+  const routes = d.routes || {};
+  for (const [tool, val] of Object.entries(routes)) {
+    const sel = document.querySelector('.tools-grid select[data-tool="' + tool + '"]');
+    if (sel && [...sel.options].some((o) => o.value === val)) sel.value = val;
+  }
+  $('agent-provider').onchange = () => { $('agent-preset').value = ''; launchPurpose = ''; fillModelEffort(); updateToolControls(); };
+  $('agent-model').onchange = $('agent-effort').onchange = () => { $('agent-preset').value = ''; launchPurpose = ''; updateToolControls(); };
+  $('agent-preset').onchange = () => {
+    const v = $('agent-preset').value;
+    if (!v) { launchPurpose = ''; updateToolControls(); return; }
+    const [prov, model, effort, purpose] = v.split('|');
+    if (state.config.providers[prov]) $('agent-provider').value = prov;
+    fillModelEffort();
+    if (model) $('agent-model').value = model;
+    if (effort) $('agent-effort').value = effort;
+    launchPurpose = purpose || '';
+    updateToolControls();
+  };
+  updateToolControls();
 }
 
 function updateToolControls() {
@@ -307,6 +362,22 @@ function updateToolControls() {
   $('tool-preview').textContent = parts.length
     ? 'system prompt will route: ' + parts.join(' · ')
     : '';
+  // Exact launch line — what the server will actually run.
+  const prov = $('agent-provider').value || 'claude';
+  const model = $('agent-model').value;
+  const effort = $('agent-effort-wrap').hidden ? '' : $('agent-effort').value;
+  const mode = $('agent-mode').value;
+  const cmd = {
+    claude: 'claude -p "…" --output-format stream-json --permission-mode ' + mode +
+      (model ? ' --model ' + model : '') + (effort ? ' --effort ' + effort : ''),
+    codex: 'codex exec' + (model ? ' -m ' + model : '') + (effort ? ' -c model_reasoning_effort="' + effort + '"' : '') + ' "…"',
+    grok: 'grok -p "…"' + (model ? ' -m ' + model : ''),
+    gemini: 'gemini -p "…"' + (model ? ' -m ' + model : ''),
+    copilot: 'copilot -p "…"' + (model && model !== 'default' ? ' --model ' + model : ''),
+  }[prov] || prov;
+  $('launch-preview').innerHTML =
+    'will run: <b>' + esc(cmd) + '</b>' +
+    (launchPurpose === 'verify' ? ' <span class="pill warn">VERIFY → forced claude/haiku</span>' : '');
 }
 
 async function launchAgent() {
@@ -319,10 +390,16 @@ async function launchAgent() {
     const res = await fetch('/api/agents/launch', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt, permission_mode: $('agent-mode').value, tools: gatherTools() }),
+      body: JSON.stringify({
+        prompt, permission_mode: $('agent-mode').value, tools: gatherTools(),
+        provider: $('agent-provider').value, model: $('agent-model').value,
+        effort: $('agent-effort-wrap').hidden ? '' : $('agent-effort').value,
+        purpose: launchPurpose,
+      }),
     });
     const data = await res.json();
-    msg.textContent = data.error ? 'error: ' + data.error : 'deployed ' + data.id;
+    msg.textContent = data.error ? 'error: ' + data.error
+      : 'deployed ' + data.id + ' (' + data.provider + (data.model ? '/' + data.model : '') + ')';
     if (!data.error) $('agent-prompt').value = '';
   } catch (e) {
     msg.textContent = 'launch failed: ' + e.message;
@@ -574,6 +651,8 @@ const graph = {
   nodes: [], links: [], byId: new Map(), adj: new Map(),
   loaded: false, selected: null, matches: new Set(),
   scale: 1, ox: 0, oy: 0, ticks: 0, dragging: null, panning: false,
+  mode: 'visual', // 'visual' (file/symbol force graph) | 'systems' (architecture nodes)
+  systems: null, selectedSystem: null,
 };
 
 const COMMUNITY_HUES = [265, 172, 315, 205, 35, 140, 0, 55, 230, 290, 100, 190];
@@ -607,6 +686,7 @@ async function initGraph() {
       graph.adj.get(l.s.id).push(l);
       graph.adj.get(l.t.id).push(l);
     }
+    graph.systems = null; // rebuild systems layout now that nodes exist
     graph.ticks = 260;
     setupGraphCanvas();
     requestAnimationFrame(graphFrame);
@@ -657,6 +737,7 @@ function graphFrame() {
 }
 
 function drawGraph() {
+  if (graph.mode === 'systems') { drawSystems(); return; }
   const canvas = $('graph-canvas');
   const ctx = canvas.getContext('2d');
   const dpr = window.devicePixelRatio || 1;
@@ -726,12 +807,15 @@ function selectNode(n) {
     const dir = l.s.id === n.id ? '→' : '←';
     return '<li>' + esc(l.relation) + ' ' + dir + ' ' + esc(other.label.slice(0, 34)) + '</li>';
   }).join('');
+  const ref = (n.file ? n.file + '#' : '') + n.label;
   card.innerHTML = '<h4>' + esc(n.label) + '</h4>' +
     '<div class="dim mono">' + esc(n.file) + '</div>' +
     '<div class="dim">community ' + esc(n.community) + ' · ' + n.deg + ' edge(s)</div>' +
+    refActions(ref) +
     (edges ? '<ul>' + edges + '</ul>' : '') +
     '<div class="dim" id="graph-card-more">loading detail…</div>';
   card.hidden = false;
+  wireRefActions(card);
   drawGraph();
   loadNodeDetail(n);
 }
@@ -756,83 +840,220 @@ async function loadNodeDetail(n) {
   for (const [kind, rows] of Object.entries(d.related || {})) {
     if (Array.isArray(rows)) for (const r of rows.slice(0, 2)) mem.push('<li><b>' + esc(kind) + '</b> ' + esc(String(r.summary || r.goal || '').slice(0, 80)) + '</li>');
   }
+  const vecs = (d.vectors || []).map((v) =>
+    '<li><span class="mono">' + esc(String(v.source_id).slice(0, 44)) + '</span> <span class="dim">sim ' + v.similarity + '</span><br><span class="dim">' + esc(v.excerpt) + '</span></li>').join('');
   more.outerHTML =
     (d.file ? '<div class="dim mono">' + (d.file.missing ? 'file missing on disk' : d.file.lines + ' lines · ' + Math.round(d.file.size / 1024 * 10) / 10 + ' KB · modified ' + age(d.file.mtime) + ' ago') + '</div>' : '') +
     edgeGroup('uses →', d.outbound) + edgeGroup('used by ←', d.inbound) +
     (d.siblings && d.siblings.length
       ? '<div class="dim">same file</div><div class="sys-members">' + d.siblings.map((s) => '<span class="node-chip" data-node="' + esc(s.id) + '">' + esc(String(s.label).slice(0, 30)) + '</span>').join('') + '</div>'
       : '') +
-    (mem.length ? '<div class="dim">related memory</div><ul>' + mem.join('') + '</ul>' : '');
+    (mem.length ? '<div class="dim">related memory</div><ul>' + mem.join('') + '</ul>' : '') +
+    (vecs ? '<div class="dim">related vectors</div><ul>' + vecs + '</ul>' : '');
   for (const chip of $('graph-card').querySelectorAll('.node-chip')) {
     chip.onclick = () => { const t = graph.byId.get(chip.dataset.node); if (t) selectNode(t); };
   }
 }
 
-// ---- practical systems view (communities → modules → files) --------------------
-
-let systemsBuilt = null;
+// ---- systems view: node-based architecture map (communities as system nodes) -----
 
 function buildSystems() {
-  if (systemsBuilt) return systemsBuilt;
+  if (graph.systems && graph.systems.systems.length) return graph.systems;
   const by = new Map();
   for (const n of graph.nodes) {
     if (!by.has(n.community)) by.set(n.community, []);
     by.get(n.community).push(n);
   }
-  // Which systems talk to which (cross-community edge counts).
-  const cross = new Map();
+  // Which systems talk to which (cross-community dependency counts).
+  const cross = new Map(); // "a|b" → count (a < b)
   for (const l of graph.links) {
     if (l.s.community === l.t.community) continue;
-    for (const [a, b] of [[l.s.community, l.t.community], [l.t.community, l.s.community]]) {
-      if (!cross.has(a)) cross.set(a, new Map());
-      cross.get(a).set(b, (cross.get(a).get(b) || 0) + 1);
+    const key = [l.s.community, l.t.community].sort().join('|');
+    cross.set(key, (cross.get(key) || 0) + 1);
+  }
+  const systems = [...by.entries()]
+    .map(([c, nodes]) => {
+      const sorted = nodes.slice().sort((x, y) => y.deg - x.deg);
+      const files = new Set(nodes.map((n) => n.file).filter(Boolean));
+      return { c, hub: sorted[0], nodes: sorted, files: files.size, x: 0, y: 0, vx: 0, vy: 0 };
+    })
+    .filter((s) => s.nodes.length >= 3)
+    .sort((a, b) => b.nodes.length - a.nodes.length)
+    .slice(0, 30);
+  const index = new Map(systems.map((s) => [s.c, s]));
+  const edges = [];
+  for (const [key, count] of cross) {
+    const [a, b] = key.split('|');
+    const sa = index.get(a), sb = index.get(b);
+    if (sa && sb) edges.push({ a: sa, b: sb, count });
+  }
+  // Small force layout in the same 1000×600 world as the visual graph.
+  systems.forEach((s, i) => {
+    s.x = 500 + Math.cos(i * 2.4) * (90 + i * 9);
+    s.y = 300 + Math.sin(i * 2.4) * (60 + i * 6);
+  });
+  for (let t = 0; t < 250; t++) {
+    for (let i = 0; i < systems.length; i++) {
+      for (let j = i + 1; j < systems.length; j++) {
+        const a = systems[i], b = systems[j];
+        let dx = a.x - b.x, dy = a.y - b.y;
+        let d2 = dx * dx + dy * dy;
+        if (d2 < 1) { dx = 1; d2 = 1; }
+        const f = 2600 / d2;
+        a.vx += dx * f; a.vy += dy * f;
+        b.vx -= dx * f; b.vy -= dy * f;
+      }
+    }
+    for (const e of edges) {
+      const dx = e.b.x - e.a.x, dy = e.b.y - e.a.y;
+      const d = Math.sqrt(dx * dx + dy * dy) || 1;
+      const f = (d - 150) * 0.02;
+      e.a.vx += (dx / d) * f; e.a.vy += (dy / d) * f;
+      e.b.vx -= (dx / d) * f; e.b.vy -= (dy / d) * f;
+    }
+    for (const s of systems) {
+      s.vx += (500 - s.x) * 0.01;
+      s.vy += (300 - s.y) * 0.01;
+      s.x += s.vx *= 0.75;
+      s.y += s.vy *= 0.75;
     }
   }
-  const systems = [...by.entries()].map(([c, nodes]) => {
-    const sorted = nodes.slice().sort((x, y) => y.deg - x.deg);
-    const files = new Set(nodes.map((n) => n.file).filter(Boolean));
-    return { c, hub: sorted[0], nodes: sorted, files: files.size, partners: [...(cross.get(c) || new Map()).entries()].sort((x, y) => y[1] - x[1]).slice(0, 4) };
-  }).sort((a, b) => b.nodes.length - a.nodes.length);
-  systemsBuilt = systems;
-  return systems;
+  // Fit whatever the sim produced into the 1000×600 world box.
+  const xs = systems.map((s) => s.x), ys = systems.map((s) => s.y);
+  const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
+  for (const s of systems) {
+    s.x = 90 + ((s.x - minX) / Math.max(1, maxX - minX)) * 820;
+    s.y = 70 + ((s.y - minY) / Math.max(1, maxY - minY)) * 460;
+  }
+  graph.systems = { systems, edges, index };
+  return graph.systems;
 }
 
-function renderSystems() {
+const sysRadius = (s) => Math.min(34, 10 + Math.sqrt(s.nodes.length) * 2.6);
+
+function drawSystems() {
+  const canvas = $('graph-canvas');
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  if (canvas.width !== w * dpr) { canvas.width = w * dpr; canvas.height = h * dpr; }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  ctx.save();
+  ctx.translate(graph.ox + w / 2, graph.oy + h / 2);
+  ctx.scale(graph.scale * (w / 1100), graph.scale * (w / 1100));
+  ctx.translate(-500, -300);
+
+  const { systems, edges } = buildSystems();
+  const sel = graph.selectedSystem;
   const q = $('graph-search').value.trim().toLowerCase();
-  const systems = buildSystems();
-  const hubName = (c) => {
-    const s = systems.find((x) => x.c === c);
-    return s ? s.hub.label : String(c);
-  };
-  const big = systems.filter((s) => s.nodes.length >= 4);
-  const restCount = systems.length - big.length;
-  $('graph-systems').innerHTML = big.map((s) => {
-    const members = s.nodes.slice(0, 16);
-    const chips = members.map((n) => {
-      const hit = q && (n.label.toLowerCase().includes(q) || n.file.toLowerCase().includes(q));
-      const dim = q && !hit;
-      return '<span class="node-chip' + (hit ? ' hit' : dim ? ' dimmed' : '') + '" data-node="' + esc(n.id) + '" title="' + esc(n.file) + '">' + esc(n.label.slice(0, 34)) + '</span>';
-    }).join('');
-    return '<div class="sys-block">' +
-      '<h4><span style="color:' + commColor(s.c, 0.95) + '">●</span> ' + esc(s.hub.label) +
-      ' <span class="dim">· ' + s.nodes.length + ' nodes · ' + s.files + ' file(s)</span></h4>' +
-      (s.partners.length ? '<div class="dim">talks to: ' + s.partners.map(([c, n]) => esc(hubName(c)) + ' (' + n + ')').join(' · ') + '</div>' : '') +
-      '<div class="sys-members">' + chips + (s.nodes.length > 16 ? '<span class="dim">+' + (s.nodes.length - 16) + ' more</span>' : '') + '</div>' +
-      '</div>';
-  }).join('') + (restCount ? '<div class="dim">' + restCount + ' smaller cluster(s) hidden — use the visual view or search.</div>' : '');
-  for (const chip of $('graph-systems').querySelectorAll('.node-chip[data-node]')) {
+  const sysMatches = q
+    ? new Set(systems.filter((s) => s.nodes.some((n) => n.label.toLowerCase().includes(q) || n.file.toLowerCase().includes(q))).map((s) => s.c))
+    : new Set();
+
+  const maxCount = Math.max(1, ...edges.map((e) => e.count));
+  for (const e of edges) {
+    const lit = sel && (e.a === sel || e.b === sel);
+    ctx.strokeStyle = lit ? 'rgba(45,226,195,0.8)' : 'rgba(124,92,255,' + (0.10 + (e.count / maxCount) * 0.3) + ')';
+    ctx.lineWidth = 0.6 + (e.count / maxCount) * 3.4;
+    ctx.beginPath(); ctx.moveTo(e.a.x, e.a.y); ctx.lineTo(e.b.x, e.b.y); ctx.stroke();
+    // dependency weight label on stronger edges
+    if (e.count >= maxCount * 0.3 || lit) {
+      ctx.fillStyle = lit ? 'rgba(45,226,195,0.9)' : 'rgba(127,134,168,0.7)';
+      ctx.font = '8px ui-monospace';
+      ctx.fillText(String(e.count), (e.a.x + e.b.x) / 2 + 3, (e.a.y + e.b.y) / 2 - 3);
+    }
+  }
+  for (const s of systems) {
+    const r = sysRadius(s);
+    const dimmed = (sel && s !== sel && !edges.some((e) => (e.a === sel && e.b === s) || (e.b === sel && e.a === s))) ||
+      (q && !sysMatches.has(s.c) && !sel);
+    ctx.fillStyle = commColor(s.c, dimmed ? 0.10 : 0.28);
+    ctx.beginPath(); ctx.arc(s.x, s.y, r, 0, 7); ctx.fill();
+    ctx.strokeStyle = s === sel ? '#fff' : (sysMatches.has(s.c) ? 'rgba(45,226,195,0.9)' : commColor(s.c, dimmed ? 0.25 : 0.85));
+    ctx.lineWidth = s === sel ? 2 : 1.2;
+    ctx.beginPath(); ctx.arc(s.x, s.y, r, 0, 7); ctx.stroke();
+    ctx.fillStyle = dimmed ? 'rgba(215,219,238,0.25)' : (s === sel ? '#fff' : 'rgba(215,219,238,0.92)');
+    ctx.font = (s === sel ? '700 ' : '600 ') + '10px ui-monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(s.hub.label.slice(0, 22), s.x, s.y - r - 5);
+    ctx.fillStyle = dimmed ? 'rgba(127,134,168,0.3)' : 'rgba(127,134,168,0.9)';
+    ctx.font = '8.5px ui-monospace';
+    ctx.fillText(s.nodes.length + 'n · ' + s.files + 'f', s.x, s.y + 3);
+    ctx.textAlign = 'start';
+  }
+  ctx.restore();
+}
+
+function systemAt(canvas, cx, cy) {
+  const p = canvasToWorld(canvas, cx, cy);
+  const { systems } = buildSystems();
+  let best = null, bestD = Infinity;
+  for (const s of systems) {
+    const d = Math.hypot(s.x - p.x, s.y - p.y);
+    if (d < sysRadius(s) + 6 && d < bestD) { bestD = d; best = s; }
+  }
+  return best;
+}
+
+function refActions(ref) {
+  return '<div class="card-actions">' +
+    '<button class="mini-btn" data-copy="' + esc(ref) + '">copy ref</button>' +
+    '<button class="mini-btn" data-delegate="' + esc(ref) + '">delegate ▸</button></div>';
+}
+
+function wireRefActions(container) {
+  for (const b of container.querySelectorAll('[data-copy]')) {
+    b.onclick = () => { navigator.clipboard.writeText(b.dataset.copy); b.textContent = 'copied ✓'; setTimeout(() => { b.textContent = 'copy ref'; }, 1200); };
+  }
+  for (const b of container.querySelectorAll('[data-delegate]')) {
+    b.onclick = () => {
+      $('agent-prompt').value = 'Work on ' + b.dataset.delegate + ' — ';
+      jumpTo('agents');
+      $('agent-prompt').focus();
+    };
+  }
+}
+
+function selectSystem(s) {
+  graph.selectedSystem = s;
+  graph.selected = null;
+  const card = $('graph-card');
+  if (!s) { card.hidden = true; drawSystems(); return; }
+  const { edges, index } = buildSystems();
+  const partners = edges
+    .filter((e) => e.a === s || e.b === s)
+    .sort((x, y) => y.count - x.count)
+    .slice(0, 6)
+    .map((e) => { const o = e.a === s ? e.b : e.a; return '<li><span class="sys-link" data-sys="' + esc(o.c) + '">' + esc(o.hub.label) + '</span> — ' + e.count + ' dependency edge(s)</li>'; })
+    .join('');
+  const members = s.nodes.slice(0, 14).map((n) =>
+    '<span class="node-chip" data-node="' + esc(n.id) + '" title="' + esc(n.file) + '">' + esc(n.label.slice(0, 30)) + '</span>').join('');
+  const ref = 'system:' + s.hub.label + ' (community ' + s.c + ', ' + s.nodes.length + ' nodes)';
+  card.innerHTML = '<h4>⬢ ' + esc(s.hub.label) + ' <span class="dim">system</span></h4>' +
+    '<div class="dim">' + s.nodes.length + ' nodes · ' + s.files + ' file(s) · community ' + esc(s.c) + '</div>' +
+    (partners ? '<div class="dim" style="margin-top:4px">depends on / used by:</div><ul>' + partners + '</ul>' : '') +
+    '<div class="dim" style="margin-top:4px">key members</div><div class="sys-members">' + members + '</div>' +
+    refActions(ref);
+  card.hidden = false;
+  for (const chip of card.querySelectorAll('.node-chip')) {
     chip.onclick = () => { const n = graph.byId.get(chip.dataset.node); if (n) selectNode(n); };
   }
+  for (const link of card.querySelectorAll('.sys-link')) {
+    link.onclick = () => { const o = index.get(link.dataset.sys); if (o) selectSystem(o); };
+  }
+  wireRefActions(card);
+  drawSystems();
 }
 
 function setGraphView(view) {
-  const systems = view === 'systems';
-  $('graph-canvas').hidden = systems;
-  $('graph-systems').hidden = !systems;
-  $('graph-view-visual').classList.toggle('active', !systems);
-  $('graph-view-systems').classList.toggle('active', systems);
-  if (systems) renderSystems();
-  else drawGraph();
+  graph.mode = view;
+  graph.selected = null;
+  graph.selectedSystem = null;
+  $('graph-card').hidden = true;
+  $('graph-view-visual').classList.toggle('active', view === 'visual');
+  $('graph-view-systems').classList.toggle('active', view === 'systems');
+  drawGraph();
 }
 
 function setupGraphCanvas() {
@@ -844,7 +1065,7 @@ function setupGraphCanvas() {
   }, { passive: false });
   canvas.addEventListener('mousedown', (e) => {
     const rect = canvas.getBoundingClientRect();
-    const n = nodeAt(canvas, e.clientX - rect.left, e.clientY - rect.top);
+    const n = graph.mode === 'visual' ? nodeAt(canvas, e.clientX - rect.left, e.clientY - rect.top) : null;
     if (n) graph.dragging = n;
     else { graph.panning = true; }
     graph.lastX = e.clientX; graph.lastY = e.clientY;
@@ -869,7 +1090,9 @@ function setupGraphCanvas() {
       const moved = Math.hypot(e.clientX - graph.lastX, e.clientY - graph.lastY);
       if (moved < 4) {
         const rect = canvas.getBoundingClientRect();
-        selectNode(nodeAt(canvas, e.clientX - rect.left, e.clientY - rect.top));
+        const cx = e.clientX - rect.left, cy = e.clientY - rect.top;
+        if (graph.mode === 'systems') selectSystem(systemAt(canvas, cx, cy));
+        else selectNode(nodeAt(canvas, cx, cy));
       }
     }
   });
@@ -884,12 +1107,18 @@ function setupGraphCanvas() {
     } else {
       $('graph-info').textContent = '';
     }
-    if (!$('graph-systems').hidden) renderSystems();
-    if (graph.matches.size === 1) selectNode(graph.byId.get([...graph.matches][0]));
+    if (graph.mode === 'visual' && graph.matches.size === 1) selectNode(graph.byId.get([...graph.matches][0]));
     else drawGraph();
   });
   $('graph-view-visual').onclick = () => setGraphView('visual');
   $('graph-view-systems').onclick = () => setGraphView('systems');
+  $('graph-fullscreen').onclick = () => {
+    const wrap = document.querySelector('.graph-wrap');
+    if (document.fullscreenElement) document.exitFullscreen();
+    else wrap.requestFullscreen();
+  };
+  document.addEventListener('fullscreenchange', () => requestAnimationFrame(drawGraph));
+  window.addEventListener('resize', () => drawGraph());
 }
 
 // ---- assistant -----------------------------------------------------------------------
@@ -933,6 +1162,178 @@ async function askAssistant(q) {
   chat.busy = false;
 }
 
+// ---- tasks (expandable todos) ----------------------------------------------------------
+
+function renderTasks() {
+  const tasks = state.tasks || [];
+  if (!tasks.length) {
+    $('p-tasks').innerHTML = '<div class="dim">No tasks in dev-memory. Create one with <span class="mono">pnpm dfc:task add "goal"</span> or via a hooked session — they appear here as expandable todos.</div>';
+    $('tasks-hint').textContent = '0';
+    return;
+  }
+  const statusPill = (s) => pill(s === 'done' ? 'ok' : s === 'blocked' ? 'fail' : s === 'in_progress' ? 'running' : 'warn').replace('>OK<', '>DONE<').replace('>WARN<', '>OPEN<').replace('>RUNNING<', '>IN PROGRESS<').replace('>FAIL<', '>BLOCKED<');
+  $('p-tasks').innerHTML = tasks.map((t, i) => {
+    const key = 'task-' + i;
+    const runs = (state.spawned_agents || []).filter((a) => a.prompt && a.prompt.includes(t.goal)).slice(0, 3);
+    const ref = 'task:' + t.goal;
+    return '<details class="card task-card"' + (ui.openTasks.has(key) ? ' open' : '') + ' data-task="' + key + '">' +
+      '<summary>' + statusPill(t.status) + ' <b>' + esc(String(t.goal).slice(0, 110)) + '</b>' +
+      ' <span class="dim">' + age(t.created_at) + ' old</span></summary>' +
+      '<div style="margin-top:8px">' +
+      '<div class="dim">agent <b>' + esc(t.source_agent || '?') + '</b> · created ' + ts(t.created_at) +
+      (t.done_at ? ' · done ' + ts(t.done_at) : ' · updated ' + ts(t.updated_at)) +
+      (Array.isArray(t.tags) && t.tags.length ? ' · tags: ' + t.tags.map(esc).join(', ') : '') + '</div>' +
+      ((t.blockers || []).length
+        ? '<div style="margin-top:6px"><span class="dim">blockers:</span>' + t.blockers.map((b) =>
+            '<div>' + pill(b.status === 'open' ? 'fail' : 'ok') + ' ' + esc(b.summary || b.text) + '</div>').join('') + '</div>'
+        : '') +
+      (runs.length
+        ? '<div style="margin-top:6px"><span class="dim">related runs:</span>' + runs.map((r) =>
+            '<div>' + pill(r.status) + ' <span class="mono">' + esc(r.id.slice(11, 23)) + '</span> ' + esc([r.provider, r.model].filter(Boolean).join('/')) + '</div>').join('') + '</div>'
+        : '') +
+      refActions(ref) +
+      '</div></details>';
+  }).join('');
+  for (const d of $('p-tasks').querySelectorAll('.task-card')) {
+    d.ontoggle = () => { if (d.open) ui.openTasks.add(d.dataset.task); else ui.openTasks.delete(d.dataset.task); };
+  }
+  wireRefActions($('p-tasks'));
+  const open = tasks.filter((t) => t.status !== 'done').length;
+  $('tasks-hint').textContent = open + ' open · ' + tasks.length + ' total';
+}
+
+// ---- vectors ----------------------------------------------------------------------------
+
+async function embedNow(btn) {
+  btn.disabled = true;
+  btn.textContent = 'embedding…';
+  try {
+    const data = await (await fetch('/api/vectors/embed', { method: 'POST' })).json();
+    btn.textContent = data.error ? 'error: ' + String(data.error).slice(0, 60)
+      : 'embedded ' + data.embedded + (data.errors ? ' (' + data.errors + ' errors)' : '');
+  } catch (e) { btn.textContent = 'failed: ' + e.message; }
+  loadState(true);
+}
+
+function renderVectors() {
+  const v = state.vectors || {};
+  const s = v.status || {};
+  const statusHtml =
+    '<div>' + pill(s.available ? 'ok' : 'off') + ' provider <b>' + esc(s.provider) + '</b>' +
+    (s.model ? ' · model <b>' + esc(s.model) + '</b>' : '') +
+    (s.dimension ? ' · dim ' + s.dimension : '') +
+    ' · key ' + (s.key_present ? pill('ok') : pill('off')) +
+    ' · approved ' + (s.approved ? pill('ok') : pill('off')) + '</div>' +
+    '<div class="dim" style="margin-top:4px">' + esc(s.reason || '') + '</div>';
+  if (v.error) {
+    $('p-vectors').innerHTML = '<div class="card"><h3>Embedding status</h3>' + statusHtml +
+      '<div class="dim" style="margin-top:6px">' + esc(v.error) + '</div></div>';
+    $('vectors-hint').textContent = s.available ? 'ready, no data' : 'off';
+    return;
+  }
+  const tot = v.totals || { chunks: 0, embedded: 0, pending: 0 };
+  const files = (v.files || []).slice(0, 20);
+  const fileRows = files.map((f) =>
+    '<tr><td class="mono">' + esc(f.path) + '</td><td>' + f.chunks + '</td><td>' + f.embedded + '</td>' +
+    '<td>' + (f.pending ? '<span class="pill warn">' + f.pending + ' pending</span>' : pill('ok')) + '</td></tr>').join('');
+  $('p-vectors').innerHTML =
+    '<div class="two-col">' +
+    '<div class="card"><h3>Embedding status</h3>' + statusHtml +
+    '<div style="margin-top:8px"><button class="glow-btn" id="embed-now"' + (s.available && tot.pending ? '' : ' disabled') + '>Embed ' + tot.pending + ' pending ▸</button>' +
+    (s.provider === 'openai' ? ' <span class="dim">paid API (approved in config)</span>' : '') + '</div></div>' +
+    '<div class="card"><h3>Coverage</h3>' +
+    '<div>chunks <b>' + tot.chunks + '</b> · embedded <b>' + tot.embedded + '</b> · pending <b>' + tot.pending + '</b></div>' +
+    ((v.models || []).length
+      ? '<div class="dim" style="margin-top:4px">models: ' + v.models.map((m) => esc(m.provider + ':' + m.model) + ' (dim ' + m.dimension + ')').join(' · ') + '</div>'
+      : '<div class="dim" style="margin-top:4px">no embedding model registered yet — nothing embedded</div>') + '</div>' +
+    '</div>' +
+    '<div class="card"><h3>Per-file coverage (worst first)</h3>' +
+    (fileRows ? '<table><tr><th>file</th><th>chunks</th><th>embedded</th><th>state</th></tr>' + fileRows + '</table>'
+      : '<div class="dim">No doc chunks in dev-memory — run <span class="mono">pnpm dfc:ingest</span> first, then embed.</div>') + '</div>';
+  const btn = $('embed-now');
+  if (btn) btn.onclick = () => embedNow(btn);
+  $('vectors-hint').textContent = s.available ? tot.embedded + '/' + tot.chunks + ' embedded' : 'off';
+}
+
+// ---- config -----------------------------------------------------------------------------
+
+function configField(label, key, value, opts) {
+  const type = opts && opts.secret ? 'password' : 'text';
+  const ph = opts && opts.secret ? (opts.set ? 'set — leave blank to keep' : 'not set') : '';
+  return '<label class="cfg-field">' + esc(label) +
+    '<input type="' + type + '" data-key="' + esc(key) + '" value="' + esc(value || '') + '" placeholder="' + esc(ph) + '"></label>';
+}
+
+function configSelect(label, key, value, choices) {
+  return '<label class="cfg-field">' + esc(label) + '<select data-key="' + esc(key) + '">' +
+    choices.map((c) => '<option value="' + esc(c) + '"' + (c === value ? ' selected' : '') + '>' + esc(c) + '</option>').join('') +
+    '</select></label>';
+}
+
+async function saveConfig(file, card, btn) {
+  const values = {};
+  for (const el of card.querySelectorAll('[data-key]')) values[el.dataset.key] = el.value;
+  btn.disabled = true;
+  btn.textContent = 'saving…';
+  try {
+    const data = await (await fetch('/api/config', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ file, values }),
+    })).json();
+    btn.textContent = data.error ? 'error: ' + data.error : 'saved ' + (data.saved || []).length + ' key(s) ✓';
+  } catch (e) { btn.textContent = 'failed: ' + e.message; }
+  btn.disabled = false;
+  ui.configStamp = ''; // force re-render with fresh status
+  loadState(true);
+}
+
+function renderConfig() {
+  const c = state.config;
+  if (!c) return;
+  const stamp = JSON.stringify([c.mercury, c.embed, c.defaults]);
+  if (stamp === ui.configStamp) return; // don't clobber in-progress edits with identical data
+  if (editingIn($('p-config'))) return;
+  ui.configStamp = stamp;
+  const d = c.defaults || {};
+  const providers = c.providers || {};
+  const provNames = Object.keys(providers);
+  $('p-config').innerHTML =
+    '<div class="dim" style="margin-bottom:8px">Saved to gitignored <span class="mono">.dfc/mercury.env · embed.env · nox.env</span> in this repo. Blank secret fields keep the existing key. Env vars still override files.</div>' +
+    '<div class="two-col">' +
+    '<div class="card" data-cfg="mercury"><h3>Assistant ' + (c.mercury.configured ? pill('ok') : pill('off')) + '</h3>' +
+    configField('API key', 'MERCURY_API_KEY', '', { secret: true, set: c.mercury.configured }) +
+    configField('Base URL (OpenAI-compatible)', 'MERCURY_BASE_URL', c.mercury.base_url) +
+    configField('Model', 'MERCURY_MODEL', c.mercury.model) +
+    configField('Tool-call limit (rounds)', 'NOX_ASSISTANT_ROUNDS', String(d.assistant_rounds)) +
+    '<button class="glow-btn cfg-save">Save ▸</button></div>' +
+    '<div class="card" data-cfg="embed"><h3>Embeddings ' + (c.embed.available ? pill('ok') : pill('off')) + '</h3>' +
+    configSelect('Provider', 'DFC_EMBED_PROVIDER', c.embed.provider, ['none', 'ollama', 'openai']) +
+    configField('Model', 'DFC_EMBED_MODEL', c.embed.model) +
+    configField('Dimension', 'DFC_EMBED_DIMENSION', String(c.embed.dimension || '')) +
+    configSelect('Approved (paid ok)', 'DFC_EMBED_APPROVED', c.embed.approved ? '1' : '0', ['0', '1']) +
+    configField('OpenAI API key', 'OPENAI_API_KEY', '', { secret: true, set: c.embed.key_present }) +
+    '<div class="dim">' + esc(c.embed.reason) + '</div>' +
+    '<button class="glow-btn cfg-save">Save ▸</button></div>' +
+    '<div class="card" data-cfg="nox"><h3>Launch defaults</h3>' +
+    configSelect('Default provider', 'NOX_DEFAULT_PROVIDER', d.provider, provNames) +
+    configField('Default model', 'NOX_DEFAULT_MODEL', d.model) +
+    configSelect('Default effort', 'NOX_DEFAULT_EFFORT', d.effort, ['low', 'medium', 'high']) +
+    '<button class="glow-btn cfg-save">Save ▸</button></div>' +
+    '<div class="card" data-cfg="nox"><h3>Routing defaults</h3>' +
+    configSelect('Workflow', 'NOX_ROUTE_WORKFLOW', d.routes.workflow, ['', 'native', 'superpowers', 'gsd']) +
+    configSelect('Subagents', 'NOX_ROUTE_SUBAGENTS', d.routes.subagents, ['', 'native-dynamic', 'native-specific', 'antigravity-dynamic', 'antigravity-specific', 'codex']) +
+    configSelect('Search', 'NOX_ROUTE_SEARCH', d.routes.search, ['', 'native', 'playwright', 'firecrawl']) +
+    configSelect('Docs', 'NOX_ROUTE_DOCS', d.routes.docs, ['', 'search', 'context7']) +
+    configSelect('Git', 'NOX_ROUTE_GIT', d.routes.git, ['', 'git-cli', 'gitkraken']) +
+    '<button class="glow-btn cfg-save">Save ▸</button></div>' +
+    '</div>';
+  for (const card of $('p-config').querySelectorAll('[data-cfg]')) {
+    const btn = card.querySelector('.cfg-save');
+    btn.onclick = () => saveConfig(card.dataset.cfg, card, btn);
+  }
+  const issues = (c.mercury.configured ? 0 : 1) + (c.embed.available ? 0 : 1);
+  $('config-hint').textContent = issues ? issues + ' provider(s) unconfigured' : 'all configured';
+}
+
 // ---- boot -----------------------------------------------------------------------------
 
 function render() {
@@ -943,14 +1344,18 @@ function render() {
     ? state.assistant.model : 'not configured (.dfc/mercury.env)';
   renderChips();
   renderControl();
+  initPickers();
   renderAgents();
   renderWorkflows();
+  renderTasks();
   renderMemory();
+  renderVectors();
   renderMetrics();
   renderTokens();
   renderSync();
   renderObservability();
   renderHealth();
+  renderConfig();
   initGraph();
 }
 
@@ -967,7 +1372,8 @@ window.loadState = loadState;
 
 $('jump').onchange = () => { if ($('jump').value) jumpTo($('jump').value); $('jump').value = ''; };
 $('agent-launch').onclick = launchAgent;
-for (const sel of document.querySelectorAll('.tools-grid select')) sel.onchange = updateToolControls;
+for (const sel of document.querySelectorAll('.tools-grid select[data-tool]')) sel.onchange = updateToolControls;
+$('agent-mode').onchange = updateToolControls;
 $('assistant-toggle').onclick = () => { $('assistant').hidden = !$('assistant').hidden; if (!$('assistant').hidden) $('assistant-q').focus(); };
 $('assistant-close').onclick = () => { $('assistant').hidden = true; };
 $('assistant-form').onsubmit = (e) => {

@@ -13,7 +13,10 @@ no dependencies); the server is [`scripts/dfc-dashboard.ts`](../scripts/dfc-dash
 | Control Room | repo/branch state, live agents, needs-attention list (blockers, stale tasks, failing health, stale graph, unverified sessions, dirty tree) | all of the below |
 | Agents | **launcher** (headless `claude -p`), run history that survives restarts, per-run inspect/retry/resume/kill, cost/turns/duration/session-id, run-comparison table, clickable hooked-session detail | spawned processes + `.agent-runs/dashboard-agents/` + `.agent-runs/sessions/` |
 | Workflows | expandable cards: steps, run history (status/turns/cost/result), **Run ▸** launches a headless agent that executes the workflow | `workflows/*.js`, `.claude/workflows/*.js` meta blocks + workflow-tagged agent runs |
-| Code Map | **visual**: canvas force graph (search, click-to-focus, community colors, drag/pan/zoom). **systems**: practical view — communities as systems with hub module, member chips, files, cross-system links. Clicking a node fetches file facts, grouped uses/used-by edges, same-file siblings, and related dev-memory | `graphify-out/graph.json` + `/api/node` |
+| Code Map | **visual**: canvas force graph (search, click-to-focus, community colors, drag/pan/zoom, ⛶ fullscreen). **systems**: node-based architecture map — communities drawn as system bubbles sized by content, edges weighted by cross-system dependency counts; click a system for partners + key members, click a member for full node detail (file facts, uses/used-by, siblings, related memory, related vectors). Copy-ref and delegate-to-launcher on every card | `graphify-out/graph.json` + `/api/node` |
+| Tasks | expandable todo cards: status, agent, tags, timestamps, linked blockers, related runs, copy-ref, delegate | dev-memory `task` + `blocker` tables |
+| Vectors | embedding provider/model/approval status, chunk coverage (embedded vs pending), per-file coverage worst-first, Embed-now action | `resolveEmbedConfig` + `doc_chunk`/`embedding_chunk` |
+| Config | edit assistant (key/base URL/model/tool rounds), embeddings (provider/model/dimension/approval/key), launch + routing defaults — saved to gitignored `.dfc/{mercury,embed,nox}.env`; secrets shown as presence only | `/api/config` |
 | Memory & Retrieval | table counts, open tasks/blockers, recent decisions/lessons/repo facts/snippets/evidence/agent runs | SurrealDB dev-memory |
 | Metrics | runs/tasks/blockers, memory growth, retrieval usage, staleness, tool activity | `collectMetrics()` |
 | Token Usage | real input/output/cache tokens by model/day/session + retrieval context-pack estimates | Claude Code transcripts (`~/.claude/projects/<munged repo or parent>/`) + `context_pack` rows |
@@ -26,9 +29,27 @@ Token sources: transcripts are matched for the repo root **and its direct parent
 
 ## Deploying agents
 
-The Agents panel spawns `claude -p "<prompt>" --output-format stream-json --verbose
---permission-mode <mode>` in the target repo. Defaults to `acceptEdits`; `plan` is
-read-only. `bypassPermissions` is intentionally not offered.
+The Agents panel spawns headless CLI agents in the target repo across five providers:
+
+| Provider | Command | Models | Effort |
+| --- | --- | --- | --- |
+| claude | `claude -p … --output-format stream-json --model <m> --effort <e>` | fable, opus, sonnet, haiku | low/medium/high |
+| codex | `codex exec -m <m> -c model_reasoning_effort="<e>" …` | gpt-5.5-codex, gpt-5.5 | low/medium/high |
+| grok | `grok -p … -m <m>` | composer-2.5 | — |
+| gemini | `gemini -p … -m <m>` | gemini-3.5-flash, gemini-3.1-pro | — |
+| copilot | `copilot -p … --model <m>` | default, gpt-5.5 | — |
+
+The **Main agent** preset dropdown fills provider/model/effort in one click; the
+`launch-preview` line shows the exact command before deploy. Non-claude providers get
+the routing block prepended to the prompt (no `--append-system-prompt` equivalent) and
+stream plain text (no cost/turns — duration is measured; result = output tail).
+
+**Testing/verification runs are pinned to Haiku**: the "testing/verify" preset sends
+`purpose: "verify"` and the server force-clamps provider/model to claude/haiku — a
+request for fable with purpose=verify launches haiku (verified live).
+
+Permission mode defaults to `acceptEdits`; `plan` is read-only. `bypassPermissions` is
+intentionally not offered.
 
 **Tool routing:** the launcher's dropdowns (Workflow: native/Superpowers/GSD ·
 Subagents: native dynamic / native pinned model+effort / Antigravity dynamic or pinned /

@@ -22,9 +22,12 @@
       <option value="control">Control Room</option>
       <option value="agents">Agents</option>
       <option value="workflows">Workflows</option>
+      <option value="tasks">Tasks</option>
       <option value="codemap">Code Map</option>
       <option value="memory">Memory</option>
+      <option value="vectors">Vectors</option>
       <option value="metrics">Metrics</option>
+      <option value="config">Config</option>
       <option value="tokens">Tokens</option>
       <option value="sync">Sync</option>
       <option value="observability">Observability</option>
@@ -47,6 +50,31 @@
       <div class="launcher card">
         <h3>Launch agent <span class="dim">headless <code>claude -p</code> · stream-json · logged to .agent-runs/dashboard-agents/</span></h3>
         <textarea id="agent-prompt" rows="3" placeholder="Prompt for the agent, e.g. &quot;Run pnpm typecheck and summarize any errors&quot;"></textarea>
+        <div class="tools-grid">
+          <label>Main agent
+            <select id="agent-preset">
+              <option value="">custom…</option>
+              <option value="claude|fable|medium|">Claude Fable 5 · medium (main)</option>
+              <option value="claude|sonnet|medium|">Claude Sonnet · medium (routine)</option>
+              <option value="claude|haiku|low|verify">Claude Haiku · testing/verify (enforced)</option>
+              <option value="codex|gpt-5.5-codex|high|">Codex GPT-5.5-codex · high</option>
+              <option value="codex|gpt-5.5|medium|">Codex GPT-5.5 · medium</option>
+              <option value="gemini|gemini-3.1-pro||">Gemini Pro 3.1</option>
+              <option value="gemini|gemini-3.5-flash||">Gemini Flash 3.5</option>
+              <option value="grok|composer-2.5||">Grok Composer 2.5</option>
+              <option value="copilot|default||">Copilot</option>
+            </select>
+          </label>
+          <label>Provider
+            <select id="agent-provider"></select>
+          </label>
+          <label>Model
+            <select id="agent-model"></select>
+          </label>
+          <label id="agent-effort-wrap">Effort
+            <select id="agent-effort"></select>
+          </label>
+        </div>
         <div class="tools-grid">
           <label>Workflow
             <select id="tool-workflow" data-tool="workflow">
@@ -105,6 +133,7 @@
             </select>
           </label>
         </div>
+        <div class="mono launch-preview" id="launch-preview"></div>
         <div class="dim mono" id="tool-preview" style="margin:6px 0 2px; white-space:pre-wrap;"></div>
         <div class="launch-row">
           <select id="agent-mode">
@@ -125,6 +154,11 @@
     <div class="body" id="p-workflows"></div>
   </details>
 
+  <details class="panel" id="tasks" open>
+    <summary><span class="dot dot-magenta"></span>Tasks<span class="hint" id="tasks-hint"></span></summary>
+    <div class="body" id="p-tasks"></div>
+  </details>
+
   <details class="panel" id="codemap" open>
     <summary><span class="dot dot-teal"></span>Code Map<span class="hint" id="codemap-hint"></span></summary>
     <div class="body">
@@ -135,11 +169,10 @@
         </div>
         <input id="graph-search" placeholder="Search nodes (label or file)…">
         <span id="graph-info" class="dim"></span>
-        <a id="graph-full" href="/gout/graph.html" target="_blank">full graphify view ↗</a>
+        <button id="graph-fullscreen" class="mini-btn" title="Expand the code map to full screen">⛶ full view</button>
       </div>
       <div class="graph-wrap">
         <canvas id="graph-canvas"></canvas>
-        <div id="graph-systems" class="graph-systems" hidden></div>
         <div id="graph-card" class="graph-card" hidden></div>
       </div>
     </div>
@@ -148,6 +181,11 @@
   <details class="panel" id="memory" open>
     <summary><span class="dot dot-magenta"></span>Memory &amp; Retrieval<span class="hint" id="memory-hint"></span></summary>
     <div class="body" id="p-memory"></div>
+  </details>
+
+  <details class="panel" id="vectors">
+    <summary><span class="dot dot-teal"></span>Vectors<span class="hint" id="vectors-hint"></span></summary>
+    <div class="body" id="p-vectors"></div>
   </details>
 
   <details class="panel" id="metrics">
@@ -168,6 +206,11 @@
   <details class="panel" id="observability">
     <summary><span class="dot dot-purple"></span>Observability<span class="hint" id="observability-hint"></span></summary>
     <div class="body" id="p-observability"></div>
+  </details>
+
+  <details class="panel" id="config">
+    <summary><span class="dot dot-purple"></span>Config<span class="hint" id="config-hint"></span></summary>
+    <div class="body" id="p-config"></div>
   </details>
 
   <details class="panel" id="health">
