@@ -118,27 +118,146 @@ function renderControl() {
 
 // ---- agents ---------------------------------------------------------------------
 
+// UI state that must survive the 5s re-render.
+const ui = {
+  openLogs: new Set(), logCache: {},
+  openResume: new Set(),
+  openSession: null, sessionCache: {},
+  openWorkflows: new Set(),
+};
+
+function editingIn(el) {
+  const a = document.activeElement;
+  return a && el.contains(a) && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA');
+}
+
+const fmtCost = (v) => (v == null ? '' : '$' + Number(v).toFixed(3));
+const fmtDur = (ms) => (ms == null ? '' : ms >= 60000 ? (ms / 60000).toFixed(1) + 'm' : Math.round(ms / 1000) + 's');
+
+function agentCard(a) {
+  const feed = (a.lines || []).slice(-30).map(esc).join('\n');
+  const logOpen = ui.openLogs.has(a.id);
+  const resumeOpen = ui.openResume.has(a.id);
+  const metrics = [
+    a.num_turns != null ? a.num_turns + ' turns' : '',
+    fmtCost(a.cost_usd), fmtDur(a.duration_ms),
+    a.session_id ? 'session ' + esc(a.session_id.slice(0, 8)) : '',
+  ].filter(Boolean).join(' · ');
+  const buttons =
+    (a.status === 'running' ? '<button class="kill-btn" data-act="kill" data-id="' + esc(a.id) + '">kill</button>' : '') +
+    '<button class="mini-btn" data-act="log" data-id="' + esc(a.id) + '">' + (logOpen ? 'hide log' : 'inspect') + '</button>' +
+    (a.status !== 'running' && a.prompt !== '(prompt not recorded)'
+      ? '<button class="mini-btn" data-act="retry" data-id="' + esc(a.id) + '">retry</button>' : '') +
+    (a.status !== 'running' && a.session_id
+      ? '<button class="mini-btn" data-act="resume" data-id="' + esc(a.id) + '">resume</button>' : '');
+  return '<div class="card">' +
+    '<h3>' + pill(a.status) + (a.historical ? ' ' + pill('off').replace('OFF', 'PAST') : '') +
+    (a.workflow ? ' <span class="wf-tag">⚙ ' + esc(a.workflow) + '</span>' : '') +
+    ' <span class="dim">' + ts(a.started_at) + ' · mode ' + esc(a.permission_mode) + '</span>' +
+    '<span style="float:right;display:flex;gap:6px">' + buttons + '</span></h3>' +
+    '<div class="mono">' + esc(a.prompt.slice(0, 200)) + '</div>' +
+    (metrics ? '<div class="dim" style="margin-top:3px">' + metrics + (a.resumed_from ? ' · resumed from ' + esc(a.resumed_from.slice(0, 8)) : '') + '</div>' : '') +
+    (a.tools && Object.keys(a.tools).length
+      ? '<div class="dim" style="margin-top:3px">tools: ' + Object.entries(a.tools).map(([k, v]) => esc(k) + '=' + esc(v)).join(' · ') + '</div>'
+      : '') +
+    (resumeOpen
+      ? '<div class="launch-row" style="margin-top:6px"><input class="resume-input" data-id="' + esc(a.id) + '" placeholder="Follow-up prompt for resumed session…" style="flex:1">' +
+        '<button class="glow-btn" data-act="resume-go" data-id="' + esc(a.id) + '">Resume ▸</button></div>'
+      : '') +
+    (logOpen
+      ? '<div class="agent-feed">' + ((ui.logCache[a.id] || ['loading…']).map(esc).join('\n')) + '</div>'
+      : (a.status === 'running' && feed ? '<div class="agent-feed">' + feed + '</div>' : '')) +
+    (a.result ? '<div class="agent-result">' + esc(a.result) + '</div>' : '') +
+    '</div>';
+}
+
+async function agentAction(act, id, btn) {
+  if (act === 'kill') {
+    btn.disabled = true;
+    await fetch('/api/agents/' + encodeURIComponent(id) + '/kill', { method: 'POST' });
+  } else if (act === 'log') {
+    if (ui.openLogs.has(id)) ui.openLogs.delete(id);
+    else {
+      ui.openLogs.add(id);
+      const data = await (await fetch('/api/agents/' + encodeURIComponent(id) + '/log')).json();
+      ui.logCache[id] = data.lines && data.lines.length ? data.lines : ['(no log lines)'];
+    }
+    renderAgents();
+    return;
+  } else if (act === 'retry') {
+    btn.disabled = true;
+    const data = await (await fetch('/api/agents/' + encodeURIComponent(id) + '/retry', { method: 'POST' })).json();
+    if (data.error) { $('agent-launch-msg').textContent = 'retry: ' + data.error; }
+  } else if (act === 'resume') {
+    if (ui.openResume.has(id)) ui.openResume.delete(id); else ui.openResume.add(id);
+    renderAgents();
+    const inp = document.querySelector('.resume-input[data-id="' + CSS.escape(id) + '"]');
+    if (inp) inp.focus();
+    return;
+  } else if (act === 'resume-go') {
+    const inp = document.querySelector('.resume-input[data-id="' + CSS.escape(id) + '"]');
+    const prompt = inp ? inp.value.trim() : '';
+    if (!prompt) return;
+    btn.disabled = true;
+    const data = await (await fetch('/api/agents/' + encodeURIComponent(id) + '/resume', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt }),
+    })).json();
+    if (data.error) { $('agent-launch-msg').textContent = 'resume: ' + data.error; }
+    ui.openResume.delete(id);
+  }
+  loadState(false);
+}
+
+async function toggleSession(id) {
+  if (ui.openSession === id) { ui.openSession = null; renderAgents(); return; }
+  ui.openSession = id;
+  if (!ui.sessionCache[id]) {
+    try {
+      ui.sessionCache[id] = await (await fetch('/api/sessions/' + encodeURIComponent(id))).json();
+    } catch { ui.sessionCache[id] = { error: 'failed to load' }; }
+  }
+  renderAgents();
+}
+
+function sessionDetailHtml(id) {
+  const d = ui.sessionCache[id];
+  if (!d) return '<div class="dim">loading…</div>';
+  if (d.error) return '<div class="dim">' + esc(d.error) + '</div>';
+  return '<div class="card" style="margin-top:8px"><h3>Session ' + esc(id.slice(0, 12)) +
+    ' <span class="dim">' + d.event_count + ' events · verified ' + (d.verified ? 'yes' : 'no') +
+    ' · graph scan ' + (d.graph_scanned ? 'yes' : 'no') + '</span></h3>' +
+    table(d.events, ['timestamp', 'tool', 'detail'], {
+      timestamp: (v) => ts(v),
+      tool: (v) => '<span class="mono">' + esc(v) + '</span>',
+      detail: (v) => '<span class="mono">' + esc(v) + '</span>',
+    }) + '</div>';
+}
+
 function renderAgents() {
+  if (editingIn($('p-agents'))) return; // don't clobber an in-progress resume prompt
   const spawned = state.spawned_agents || [];
   const sessions = state.sessions || [];
+  const running = spawned.filter((a) => a.status === 'running');
+
+  const compare = spawned.length > 1
+    ? '<div class="card"><h3>Run comparison</h3>' +
+      table(spawned.slice(0, 12), ['run', 'workflow', 'status', 'turns', 'cost', 'duration', 'started'], {
+        run: (_, r) => '<span class="mono">' + esc(r.id.slice(11, 23)) + '</span>',
+        workflow: (_, r) => esc(r.workflow || '—'),
+        status: (_, r) => pill(r.status),
+        turns: (_, r) => r.num_turns ?? '',
+        cost: (_, r) => fmtCost(r.cost_usd),
+        duration: (_, r) => fmtDur(r.duration_ms),
+        started: (_, r) => ts(r.started_at),
+      }) + '</div>'
+    : '';
+
   const spawnedHtml = spawned.length
-    ? spawned.map((a) => {
-        const feed = (a.lines || []).slice(-30).map(esc).join('\n');
-        return '<div class="card"><h3>' + pill(a.status) + ' <span class="dim">' + ts(a.started_at) + ' · mode ' + esc(a.permission_mode) + '</span>' +
-          (a.status === 'running' ? ' <button class="kill-btn" data-kill="' + esc(a.id) + '">kill</button>' : '') + '</h3>' +
-          '<div class="mono">' + esc(a.prompt.slice(0, 200)) + '</div>' +
-          (a.tools && Object.keys(a.tools).length
-            ? '<div class="dim" style="margin-top:3px">tools: ' + Object.entries(a.tools).map(([k, v]) => esc(k) + '=' + esc(v)).join(' · ') +
-              (a.system_prompt ? ' <details style="display:inline"><summary style="display:inline;cursor:pointer">· system prompt</summary><div class="agent-feed">' + esc(a.system_prompt) + '</div></details>' : '') + '</div>'
-            : '') +
-          (feed ? '<div class="agent-feed">' + feed + '</div>' : '') +
-          (a.result ? '<div class="agent-result">' + esc(a.result) + '</div>' : '') +
-          '</div>';
-      }).join('')
-    : '<div class="card"><span class="dim">No agents deployed from this dashboard yet.</span></div>';
+    ? spawned.map(agentCard).join('')
+    : '<div class="card"><span class="dim">No agent runs yet. Deploy one above — runs are logged to .agent-runs/dashboard-agents/ and reappear here after restarts.</span></div>';
 
   const sessHtml = table(sessions, ['id', 'state', 'events', 'last', 'top tools', 'verified', 'graph'], {
-    id: (v) => '<span class="mono">' + esc(String(v).slice(0, 12)) + '</span>',
+    id: (v) => '<a href="#" class="mono sess-link" data-sess="' + esc(v) + '">' + esc(String(v).slice(0, 12)) + '</a>',
     state: (_, r) => (r.active ? pill('running') : pill('off')),
     last: (v) => age(v) + ' ago',
     'top tools': (_, r) => '<span class="mono">' + esc(r.top_tools) + '</span>',
@@ -147,19 +266,27 @@ function renderAgents() {
   });
 
   $('p-agents').innerHTML =
-    '<div class="card"><h3>Deployed agents (this server)</h3>' + spawnedHtml + '</div>' +
-    '<div class="card"><h3>Hooked sessions (.agent-runs/sessions/) — agent history</h3>' +
-    (sessions.length ? sessHtml : '<div class="dim">no hooked sessions yet — run claude with the plugin loaded</div>') + '</div>';
+    (running.length
+      ? '<div class="card live-card"><h3>Running now (' + running.length + ')</h3>' +
+        running.map((a) => '<div>' + pill('running') + ' <span class="mono">' + esc(a.prompt.slice(0, 90)) + '</span>' +
+          (a.workflow ? ' <span class="wf-tag">⚙ ' + esc(a.workflow) + '</span>' : '') +
+          ' <span class="dim">' + age(a.started_at) + '</span></div>').join('') + '</div>'
+      : '') +
+    compare +
+    '<div class="card"><h3>Agent runs (live + history)</h3>' + spawnedHtml + '</div>' +
+    '<div class="card"><h3>Hooked sessions (.agent-runs/sessions/) — click a session to inspect</h3>' +
+    (sessions.length
+      ? sessHtml + (ui.openSession ? sessionDetailHtml(ui.openSession) : '')
+      : '<div class="dim">No hooked sessions. Hooks are bundled but only fire inside a Claude session started with this plugin loaded (<span class="mono">claude --plugin-dir &lt;plugin&gt;</span>). Data appears here after the next hooked session.</div>') +
+    '</div>';
 
-  for (const btn of $('p-agents').querySelectorAll('[data-kill]')) {
-    btn.onclick = async () => {
-      btn.disabled = true;
-      await fetch('/api/agents/' + encodeURIComponent(btn.dataset.kill) + '/kill', { method: 'POST' });
-      loadState(false);
-    };
+  for (const btn of $('p-agents').querySelectorAll('[data-act]')) {
+    btn.onclick = () => agentAction(btn.dataset.act, btn.dataset.id, btn);
   }
-  const running = spawned.filter((a) => a.status === 'running').length;
-  $('agents-hint').textContent = running + ' running · ' + sessions.length + ' session(s)';
+  for (const link of $('p-agents').querySelectorAll('.sess-link')) {
+    link.onclick = (e) => { e.preventDefault(); toggleSession(link.dataset.sess); };
+  }
+  $('agents-hint').textContent = running.length + ' running · ' + spawned.length + ' run(s) · ' + sessions.length + ' session(s)';
 }
 
 function gatherTools() {
@@ -206,18 +333,68 @@ async function launchAgent() {
 
 // ---- workflows -----------------------------------------------------------------
 
+function workflowRuns(name) {
+  return (state.spawned_agents || []).filter((a) => a.workflow === name);
+}
+
+async function runWorkflow(name, btn) {
+  btn.disabled = true;
+  btn.textContent = 'launching…';
+  try {
+    const data = await (await fetch('/api/workflows/run', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }),
+    })).json();
+    if (data.error) btn.textContent = 'error: ' + data.error;
+    else { jumpTo('agents'); }
+  } catch (e) { btn.textContent = 'failed'; }
+  loadState(false);
+}
+
 function renderWorkflows() {
+  if (editingIn($('p-workflows'))) return;
   const rows = state.workflows || [];
-  $('p-workflows').innerHTML = rows.length
-    ? '<div class="cards">' + rows.map((w) =>
-        '<div class="card"><h3>' + esc(w.name) + ' <span class="dim">' + esc(w.source) + '</span></h3>' +
-        '<div>' + esc(w.description) + '</div>' +
-        (w.phases.length ? '<div class="dim" style="margin-top:4px">phases: ' + w.phases.map(esc).join(' → ') + '</div>' : '') +
-        (w.when_to_use ? '<div class="dim" style="margin-top:4px">' + esc(w.when_to_use) + '</div>' : '') +
-        '</div>').join('') + '</div>' +
-      '<div class="dim" style="margin-top:8px">Run inside a Claude session: <code>Workflow({scriptPath: "&lt;file&gt;"})</code> or via the bundled skills. Run history is not recorded yet.</div>'
-    : '<div class="dim">no workflow definitions found</div>';
-  $('workflows-hint').textContent = rows.length + ' definition(s)';
+  if (!rows.length) {
+    $('p-workflows').innerHTML = '<div class="dim">No workflow definitions found — expected in <span class="mono">workflows/*.js</span> (plugin) or <span class="mono">.claude/workflows/*.js</span> (repo). Add one and it appears here.</div>';
+    $('workflows-hint').textContent = '0';
+    return;
+  }
+  $('p-workflows').innerHTML = rows.map((w) => {
+    const runs = workflowRuns(w.name);
+    const last = runs[0];
+    const open = ui.openWorkflows.has(w.name);
+    const steps = w.phases.length
+      ? '<ol class="wf-steps">' + w.phases.map((p) => '<li>' + esc(p) + '</li>').join('') + '</ol>'
+      : '<div class="dim">no declared phases</div>';
+    const history = runs.length
+      ? table(runs.slice(0, 6), ['status', 'started', 'turns', 'cost', 'result'], {
+          status: (_, r) => pill(r.status),
+          started: (_, r) => ts(r.started_at),
+          turns: (_, r) => r.num_turns ?? '',
+          cost: (_, r) => fmtCost(r.cost_usd),
+          result: (_, r) => esc((r.result || '').slice(0, 120)),
+        })
+      : '<div class="dim">never run from this dashboard — runs appear here (and under Agents) after you hit Run</div>';
+    return '<details class="card wf-card"' + (open ? ' open' : '') + ' data-wf="' + esc(w.name) + '">' +
+      '<summary><b>' + esc(w.name) + '</b> <span class="dim">' + esc(w.source) + '</span>' +
+      (last ? ' ' + pill(last.status) : '') +
+      ' <span class="dim">' + esc(w.description) + '</span></summary>' +
+      '<div style="margin-top:8px">' +
+      (w.when_to_use ? '<div class="dim">' + esc(w.when_to_use) + '</div>' : '') +
+      '<div class="two-col" style="margin-top:6px"><div><h3>Steps</h3>' + steps +
+      '<div class="dim mono">' + esc(w.file) + '</div></div>' +
+      '<div><h3>Run history</h3>' + history + '</div></div>' +
+      '<div style="margin-top:8px"><button class="glow-btn wf-run" data-wf="' + esc(w.name) + '">Run ▸</button> ' +
+      '<span class="dim">deploys a headless agent that executes this workflow (acceptEdits; real token cost — see run history)</span></div>' +
+      '</div></details>';
+  }).join('');
+  for (const d of $('p-workflows').querySelectorAll('.wf-card')) {
+    d.ontoggle = () => { if (d.open) ui.openWorkflows.add(d.dataset.wf); else ui.openWorkflows.delete(d.dataset.wf); };
+  }
+  for (const btn of $('p-workflows').querySelectorAll('.wf-run')) {
+    btn.onclick = () => runWorkflow(btn.dataset.wf, btn);
+  }
+  const lastAny = (state.spawned_agents || []).find((a) => a.workflow);
+  $('workflows-hint').textContent = rows.length + ' definition(s)' + (lastAny ? ' · last run ' + lastAny.status : '');
 }
 
 // ---- memory ---------------------------------------------------------------------
@@ -349,7 +526,22 @@ function renderSync() {
 // ---- observability ----------------------------------------------------------------
 
 function renderObservability() {
-  const ev = (state.recent_events || []).map((e) =>
+  const obsCheck = (state.health || []).find((c) => c.name === 'Observability') || {};
+  const events = state.recent_events || [];
+  const sessions = state.sessions || [];
+  // Tri-state: hooks not attached (no .agent-runs) / attached but quiet / flowing.
+  let status;
+  if (obsCheck.status === 'off') {
+    status = pill('off') + ' <b>Hooks not attached yet.</b> The logging hooks are bundled with the plugin but only run inside a hooked Claude session. ' +
+      '<div class="dim" style="margin-top:4px">Next action: start a session with <span class="mono">claude --plugin-dir &lt;plugin path&gt;</span> in this repo — <span class="mono">.agent-runs/</span> and the event stream appear on the first tool call.</div>';
+  } else if (!events.length && !sessions.length) {
+    status = pill('warn') + ' <b>Configured, no data yet.</b> <span class="mono">.agent-runs/</span> exists but holds no tool events. ' +
+      '<div class="dim" style="margin-top:4px">Next action: run any hooked Claude session (or <span class="mono">pnpm dfc:log-tool</span> manually); events land in <span class="mono">.agent-runs/current.jsonl</span>.</div>';
+  } else {
+    status = pill('ok') + ' hooks attached · ' + sessions.length + ' session(s) logged · ' + events.length + ' recent event(s)' +
+      '<div class="dim" style="margin-top:4px">Import into dev-memory with <span class="mono">pnpm dfc:import-runs --agent claude</span> to make runs queryable/searchable.</div>';
+  }
+  const ev = events.map((e) =>
     '<tr><td class="dim">' + ts(e.timestamp) + '</td><td class="mono">' + esc(e.tool) + '</td>' +
     '<td class="mono">' + esc(String(e.command || e.file || '').slice(0, 90)) + '</td></tr>').join('');
   const appr = (state.approvals || []).length
@@ -357,12 +549,14 @@ function renderObservability() {
         file: (v) => '<span class="mono">' + esc(v) + '</span>',
         tool_pattern: (v) => '<span class="mono">' + esc(v) + '</span>',
       })
-    : '<div class="dim">no scoped approval records</div>';
+    : '<div class="dim">No scoped approval records — that means no hook overrides are active (a good default). To grant one, copy <span class="mono">templates/approval.example.json</span> into <span class="mono">.agent-runs/approvals/</span> with a narrow <span class="mono">tool_pattern</span> and expiry.</div>';
   $('p-observability').innerHTML =
+    '<div class="card"><h3>Status</h3>' + status + '</div>' +
     '<div class="card"><h3>Recent tool events (.agent-runs/current.jsonl)</h3>' +
-    (ev ? '<table><tr><th>time</th><th>tool</th><th>command/file</th></tr>' + ev + '</table>' : '<div class="dim">none yet</div>') + '</div>' +
+    (ev ? '<table><tr><th>time</th><th>tool</th><th>command/file</th></tr>' + ev + '</table>'
+        : '<div class="dim">Empty = no hooked tool calls recorded yet (dashboard-deployed agents log to <span class="mono">.agent-runs/dashboard-agents/</span> instead — see the Agents panel).</div>') + '</div>' +
     '<div class="card"><h3>Scoped approvals</h3>' + appr + '</div>';
-  $('observability-hint').textContent = (state.recent_events || []).length + ' recent event(s)';
+  $('observability-hint').textContent = obsCheck.status === 'off' ? 'hooks not attached' : (events.length + ' recent event(s)');
 }
 
 // ---- health ------------------------------------------------------------------------
@@ -535,9 +729,110 @@ function selectNode(n) {
   card.innerHTML = '<h4>' + esc(n.label) + '</h4>' +
     '<div class="dim mono">' + esc(n.file) + '</div>' +
     '<div class="dim">community ' + esc(n.community) + ' · ' + n.deg + ' edge(s)</div>' +
-    (edges ? '<ul>' + edges + '</ul>' : '');
+    (edges ? '<ul>' + edges + '</ul>' : '') +
+    '<div class="dim" id="graph-card-more">loading detail…</div>';
   card.hidden = false;
   drawGraph();
+  loadNodeDetail(n);
+}
+
+/** Server-side detail: file facts, grouped edges, same-file siblings, related memory. */
+async function loadNodeDetail(n) {
+  let d;
+  try {
+    d = await (await fetch('/api/node?id=' + encodeURIComponent(n.id))).json();
+  } catch { d = { error: 'detail unavailable' }; }
+  if (graph.selected !== n) return; // stale response
+  const more = $('graph-card-more');
+  if (!more) return;
+  if (d.error) { more.textContent = d.error; return; }
+  const edgeGroup = (title, groups) => {
+    const parts = Object.entries(groups || {}).map(([rel, names]) =>
+      '<li><b>' + esc(rel) + '</b> ' + names.slice(0, 8).map(esc).join(', ') +
+      (names.length > 8 ? ' <span class="dim">+' + (names.length - 8) + '</span>' : '') + '</li>');
+    return parts.length ? '<div class="dim">' + title + '</div><ul>' + parts.join('') + '</ul>' : '';
+  };
+  const mem = [];
+  for (const [kind, rows] of Object.entries(d.related || {})) {
+    if (Array.isArray(rows)) for (const r of rows.slice(0, 2)) mem.push('<li><b>' + esc(kind) + '</b> ' + esc(String(r.summary || r.goal || '').slice(0, 80)) + '</li>');
+  }
+  more.outerHTML =
+    (d.file ? '<div class="dim mono">' + (d.file.missing ? 'file missing on disk' : d.file.lines + ' lines · ' + Math.round(d.file.size / 1024 * 10) / 10 + ' KB · modified ' + age(d.file.mtime) + ' ago') + '</div>' : '') +
+    edgeGroup('uses →', d.outbound) + edgeGroup('used by ←', d.inbound) +
+    (d.siblings && d.siblings.length
+      ? '<div class="dim">same file</div><div class="sys-members">' + d.siblings.map((s) => '<span class="node-chip" data-node="' + esc(s.id) + '">' + esc(String(s.label).slice(0, 30)) + '</span>').join('') + '</div>'
+      : '') +
+    (mem.length ? '<div class="dim">related memory</div><ul>' + mem.join('') + '</ul>' : '');
+  for (const chip of $('graph-card').querySelectorAll('.node-chip')) {
+    chip.onclick = () => { const t = graph.byId.get(chip.dataset.node); if (t) selectNode(t); };
+  }
+}
+
+// ---- practical systems view (communities → modules → files) --------------------
+
+let systemsBuilt = null;
+
+function buildSystems() {
+  if (systemsBuilt) return systemsBuilt;
+  const by = new Map();
+  for (const n of graph.nodes) {
+    if (!by.has(n.community)) by.set(n.community, []);
+    by.get(n.community).push(n);
+  }
+  // Which systems talk to which (cross-community edge counts).
+  const cross = new Map();
+  for (const l of graph.links) {
+    if (l.s.community === l.t.community) continue;
+    for (const [a, b] of [[l.s.community, l.t.community], [l.t.community, l.s.community]]) {
+      if (!cross.has(a)) cross.set(a, new Map());
+      cross.get(a).set(b, (cross.get(a).get(b) || 0) + 1);
+    }
+  }
+  const systems = [...by.entries()].map(([c, nodes]) => {
+    const sorted = nodes.slice().sort((x, y) => y.deg - x.deg);
+    const files = new Set(nodes.map((n) => n.file).filter(Boolean));
+    return { c, hub: sorted[0], nodes: sorted, files: files.size, partners: [...(cross.get(c) || new Map()).entries()].sort((x, y) => y[1] - x[1]).slice(0, 4) };
+  }).sort((a, b) => b.nodes.length - a.nodes.length);
+  systemsBuilt = systems;
+  return systems;
+}
+
+function renderSystems() {
+  const q = $('graph-search').value.trim().toLowerCase();
+  const systems = buildSystems();
+  const hubName = (c) => {
+    const s = systems.find((x) => x.c === c);
+    return s ? s.hub.label : String(c);
+  };
+  const big = systems.filter((s) => s.nodes.length >= 4);
+  const restCount = systems.length - big.length;
+  $('graph-systems').innerHTML = big.map((s) => {
+    const members = s.nodes.slice(0, 16);
+    const chips = members.map((n) => {
+      const hit = q && (n.label.toLowerCase().includes(q) || n.file.toLowerCase().includes(q));
+      const dim = q && !hit;
+      return '<span class="node-chip' + (hit ? ' hit' : dim ? ' dimmed' : '') + '" data-node="' + esc(n.id) + '" title="' + esc(n.file) + '">' + esc(n.label.slice(0, 34)) + '</span>';
+    }).join('');
+    return '<div class="sys-block">' +
+      '<h4><span style="color:' + commColor(s.c, 0.95) + '">●</span> ' + esc(s.hub.label) +
+      ' <span class="dim">· ' + s.nodes.length + ' nodes · ' + s.files + ' file(s)</span></h4>' +
+      (s.partners.length ? '<div class="dim">talks to: ' + s.partners.map(([c, n]) => esc(hubName(c)) + ' (' + n + ')').join(' · ') + '</div>' : '') +
+      '<div class="sys-members">' + chips + (s.nodes.length > 16 ? '<span class="dim">+' + (s.nodes.length - 16) + ' more</span>' : '') + '</div>' +
+      '</div>';
+  }).join('') + (restCount ? '<div class="dim">' + restCount + ' smaller cluster(s) hidden — use the visual view or search.</div>' : '');
+  for (const chip of $('graph-systems').querySelectorAll('.node-chip[data-node]')) {
+    chip.onclick = () => { const n = graph.byId.get(chip.dataset.node); if (n) selectNode(n); };
+  }
+}
+
+function setGraphView(view) {
+  const systems = view === 'systems';
+  $('graph-canvas').hidden = systems;
+  $('graph-systems').hidden = !systems;
+  $('graph-view-visual').classList.toggle('active', !systems);
+  $('graph-view-systems').classList.toggle('active', systems);
+  if (systems) renderSystems();
+  else drawGraph();
 }
 
 function setupGraphCanvas() {
@@ -589,9 +884,12 @@ function setupGraphCanvas() {
     } else {
       $('graph-info').textContent = '';
     }
+    if (!$('graph-systems').hidden) renderSystems();
     if (graph.matches.size === 1) selectNode(graph.byId.get([...graph.matches][0]));
     else drawGraph();
   });
+  $('graph-view-visual').onclick = () => setGraphView('visual');
+  $('graph-view-systems').onclick = () => setGraphView('systems');
 }
 
 // ---- assistant -----------------------------------------------------------------------

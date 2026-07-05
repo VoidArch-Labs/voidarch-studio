@@ -630,10 +630,17 @@ interface SpawnedAgent {
   permission_mode: string;
   tools?: AgentTools;
   system_prompt?: string;
+  workflow?: string; // set when launched from a workflow card
+  resumed_from?: string; // session_id this run resumed
   status: "running" | "done" | "failed" | "killed";
   started_at: string;
   ended_at?: string;
   exit_code?: number | null;
+  session_id?: string; // Claude session id (enables --resume)
+  cost_usd?: number;
+  num_turns?: number;
+  duration_ms?: number;
+  historical?: boolean; // rehydrated from a JSONL log, not launched by this server
   lines: string[]; // ring buffer of parsed activity lines
   result?: string; // final assistant text
   proc?: ChildProcess;
@@ -680,7 +687,14 @@ function describeStreamEvent(evt: Record<string, unknown>): string | undefined {
   return undefined;
 }
 
-function launchAgent(repoRoot: string, prompt: string, permissionMode: string, tools: AgentTools = {}): SpawnedAgent {
+interface LaunchOptions {
+  tools?: AgentTools;
+  workflow?: string;
+  resumeSessionId?: string;
+}
+
+function launchAgent(repoRoot: string, prompt: string, permissionMode: string, opts: LaunchOptions = {}): SpawnedAgent {
+  const tools = opts.tools ?? {};
   const id = `${new Date().toISOString().replace(/[:.]/g, "-")}-${Math.random().toString(36).slice(2, 7)}`;
   const mode = ALLOWED_PERMISSION_MODES.has(permissionMode) ? permissionMode : "acceptEdits";
   const systemPrompt = buildAgentSystemPrompt(tools);
@@ -691,11 +705,20 @@ function launchAgent(repoRoot: string, prompt: string, permissionMode: string, t
     if (k === "CLAUDECODE" || k.startsWith("CLAUDE_CODE_")) delete env[k];
   }
   const agent: SpawnedAgent = {
-    id, prompt, permission_mode: mode, tools, system_prompt: systemPrompt, status: "running",
+    id, prompt, permission_mode: mode, tools, system_prompt: systemPrompt,
+    workflow: opts.workflow, resumed_from: opts.resumeSessionId, status: "running",
     started_at: new Date().toISOString(), lines: [],
   };
   const logPath = agentLogPath(repoRoot, id);
+  // First log line: our own metadata, so history survives server restarts.
+  try {
+    appendFileSync(logPath, `${JSON.stringify({
+      type: "dfc_meta", id, prompt, permission_mode: mode, tools,
+      workflow: opts.workflow, resumed_from: opts.resumeSessionId, started_at: agent.started_at,
+    })}\n`);
+  } catch { /* history is best-effort */ }
   const argv = ["-p", prompt, "--output-format", "stream-json", "--verbose", "--permission-mode", mode];
+  if (opts.resumeSessionId) argv.push("--resume", opts.resumeSessionId);
   if (systemPrompt) argv.push("--append-system-prompt", systemPrompt);
   const proc = spawn("claude", argv, { cwd: repoRoot, env, stdio: ["ignore", "pipe", "pipe"] });
   agent.proc = proc;
@@ -713,9 +736,16 @@ function launchAgent(repoRoot: string, prompt: string, permissionMode: string, t
       } catch { /* logging must never kill the run */ }
       try {
         const evt = JSON.parse(line) as Record<string, unknown>;
+        if (!agent.session_id && typeof evt.session_id === "string") agent.session_id = evt.session_id;
         const desc = describeStreamEvent(evt);
         if (desc) pushLine(agent, desc);
-        if (evt.type === "result") agent.result = String(evt.result ?? "").slice(0, 4000);
+        if (evt.type === "result") {
+          agent.result = String(evt.result ?? "").slice(0, 4000);
+          agent.cost_usd = Number(evt.total_cost_usd ?? 0) || undefined;
+          agent.num_turns = Number(evt.num_turns ?? 0) || undefined;
+          agent.duration_ms = Number(evt.duration_ms ?? 0) || undefined;
+          if (evt.subtype && evt.subtype !== "success") agent.status = "failed";
+        }
       } catch {
         pushLine(agent, line.slice(0, 160));
       }
@@ -740,10 +770,133 @@ function launchAgent(repoRoot: string, prompt: string, permissionMode: string, t
   return agent;
 }
 
-function serializeAgents(): Array<Omit<SpawnedAgent, "proc">> {
-  return [...spawnedAgents.values()]
-    .sort((a, b) => (a.started_at < b.started_at ? 1 : -1))
-    .map(({ proc: _proc, ...rest }) => rest);
+/** Rebuild past runs from .agent-runs/dashboard-agents/*.jsonl (server-restart survivors). */
+function loadHistoricalAgents(repoRoot: string): SpawnedAgent[] {
+  const dir = join(repoRoot, ".agent-runs", "dashboard-agents");
+  if (!existsSync(dir)) return [];
+  const out: SpawnedAgent[] = [];
+  for (const f of readdirSync(dir).filter((f) => f.endsWith(".jsonl"))) {
+    const id = basename(f, ".jsonl");
+    if (spawnedAgents.has(id)) continue; // live registry wins
+    const agent: SpawnedAgent = {
+      id, prompt: "(prompt not recorded)", permission_mode: "?",
+      status: "failed", started_at: "", lines: [], historical: true,
+    };
+    for (const evt of readJsonl(join(dir, f))) {
+      if (evt.type === "dfc_meta") {
+        agent.prompt = String(evt.prompt ?? agent.prompt);
+        agent.permission_mode = String(evt.permission_mode ?? "?");
+        agent.tools = evt.tools as AgentTools | undefined;
+        agent.workflow = evt.workflow ? String(evt.workflow) : undefined;
+        agent.resumed_from = evt.resumed_from ? String(evt.resumed_from) : undefined;
+        agent.started_at = String(evt.started_at ?? "");
+      }
+      if (!agent.session_id && typeof evt.session_id === "string") agent.session_id = evt.session_id;
+      if (evt.type === "result") {
+        agent.status = evt.subtype === "success" ? "done" : "failed";
+        agent.result = String(evt.result ?? "").slice(0, 4000);
+        agent.cost_usd = Number(evt.total_cost_usd ?? 0) || undefined;
+        agent.num_turns = Number(evt.num_turns ?? 0) || undefined;
+        agent.duration_ms = Number(evt.duration_ms ?? 0) || undefined;
+      }
+    }
+    if (!agent.started_at) {
+      // fall back to the timestamp encoded in the id: 2026-07-05T10-52-34-415Z-xxxxx
+      const m = /^(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z/.exec(id);
+      if (m) agent.started_at = `${m[1]}T${m[2]}:${m[3]}:${m[4]}.${m[5]}Z`;
+    }
+    out.push(agent);
+  }
+  return out;
+}
+
+function serializeAgents(repoRoot?: string): Array<Omit<SpawnedAgent, "proc">> {
+  const live = [...spawnedAgents.values()].map(({ proc: _proc, ...rest }) => rest);
+  const historical = repoRoot ? loadHistoricalAgents(repoRoot) : [];
+  return [...live, ...historical]
+    .sort((a, b) => (a.status === "running" ? -1 : b.status === "running" ? 1 : a.started_at < b.started_at ? 1 : -1))
+    .slice(0, 30);
+}
+
+/** Readable log lines for one run (live buffer or full JSONL replay). */
+function agentLog(repoRoot: string, id: string): string[] {
+  if (!/^[\w.-]+$/.test(id)) return [];
+  const path = join(repoRoot, ".agent-runs", "dashboard-agents", `${id}.jsonl`);
+  if (!existsSync(path)) return spawnedAgents.get(id)?.lines ?? [];
+  const lines: string[] = [];
+  for (const evt of readJsonl(path)) {
+    if (evt.type === "dfc_meta") {
+      lines.push(`meta: mode=${String(evt.permission_mode)} workflow=${String(evt.workflow ?? "-")}`);
+      continue;
+    }
+    const desc = describeStreamEvent(evt);
+    if (desc) lines.push(desc);
+  }
+  return lines.slice(-300);
+}
+
+/** Full detail for one hooked session (.agent-runs/sessions/<id>/). */
+function sessionDetail(repoRoot: string, id: string): Record<string, unknown> | undefined {
+  if (!/^[\w.-]+$/.test(id)) return undefined;
+  const dir = join(repoRoot, ".agent-runs", "sessions", id);
+  if (!existsSync(dir)) return undefined;
+  const events = readJsonl(join(dir, "tools.jsonl"));
+  return {
+    id,
+    verified: existsSync(join(dir, "verification.json")),
+    graph_scanned: existsSync(join(dir, "graph-scanned.json")),
+    verification: readJson(join(dir, "verification.json")),
+    event_count: events.length,
+    events: events.slice(-120).map((e) => ({
+      timestamp: e.timestamp, tool: e.tool,
+      detail: String(e.command ?? e.file ?? e.pattern ?? "").slice(0, 140),
+    })),
+  };
+}
+
+/** Practical node inspector: file facts + grouped edges + related memory/state. */
+async function nodeDetail(repoRoot: string, nodeId: string): Promise<Record<string, unknown>> {
+  const g = loadGraphData(repoRoot);
+  if (!g) return { error: "no repo graph" };
+  const node = g.nodes.find((n) => String(n.id) === nodeId);
+  if (!node) return { error: "unknown node" };
+  const labels = new Map(g.nodes.map((n) => [String(n.id), n]));
+  const inbound: Record<string, string[]> = {};
+  const outbound: Record<string, string[]> = {};
+  for (const l of g.links) {
+    if (String(l.source) === nodeId) {
+      const t = labels.get(String(l.target));
+      (outbound[String(l.relation)] ??= []).push(String(t?.label ?? l.target));
+    } else if (String(l.target) === nodeId) {
+      const s = labels.get(String(l.source));
+      (inbound[String(l.relation)] ??= []).push(String(s?.label ?? l.source));
+    }
+  }
+  const sourceFile = String(node.source_file ?? "");
+  let file: Record<string, unknown> | undefined;
+  if (sourceFile) {
+    const abs = join(repoRoot, sourceFile);
+    if (existsSync(abs) && statSync(abs).isFile()) {
+      const st = statSync(abs);
+      let lineCount = 0;
+      try {
+        lineCount = readFileSync(abs, "utf8").split("\n").length;
+      } catch { /* binary or unreadable */ }
+      file = { path: sourceFile, size: st.size, lines: lineCount, mtime: new Date(st.mtimeMs).toISOString() };
+    } else {
+      file = { path: sourceFile, missing: true };
+    }
+    // Sibling nodes defined in the same file — "related files/modules" anchor.
+  }
+  const siblings = sourceFile
+    ? g.nodes.filter((n) => String(n.source_file ?? "") === sourceFile && String(n.id) !== nodeId)
+        .slice(0, 12).map((n) => ({ id: n.id, label: n.label }))
+    : [];
+  const related = await toolSearchMemory(repoRoot, String(node.label ?? nodeId));
+  return {
+    node: { id: node.id, label: node.label, file_type: node.file_type, community: node.community, origin: node._origin },
+    file, siblings, inbound, outbound, related,
+  };
 }
 
 // ---- Mercury assistant (OpenAI-compatible, read-only tools) -------------------------
@@ -904,7 +1057,7 @@ async function toolGetState(repoRoot: string): Promise<unknown> {
     },
     health: collectHealth(repoRoot),
     sessions: collectSessions(repoRoot).slice(0, 8),
-    spawned_agents: serializeAgents().map(({ lines: _lines, ...a }) => a).slice(0, 8),
+    spawned_agents: serializeAgents(repoRoot).map(({ lines: _lines, ...a }) => a).slice(0, 8),
     sync: collectSync(repoRoot),
     workflows: collectWorkflows(repoRoot).map((w) => ({ name: w.name, description: w.description })),
     memory_counts: memory.counts ?? {},
@@ -1025,7 +1178,7 @@ async function buildState(repoRoot: string, fresh: boolean): Promise<Record<stri
     },
     health: collectHealth(repoRoot),
     sessions: collectSessions(repoRoot),
-    spawned_agents: serializeAgents(),
+    spawned_agents: serializeAgents(repoRoot),
     recent_events: readJsonl(join(repoRoot, ".agent-runs", "current.jsonl")).slice(-60).reverse(),
     approvals: collectApprovals(repoRoot),
     graph: collectGraph(repoRoot),
@@ -1094,7 +1247,53 @@ async function main(): Promise<void> {
       } else if (url.pathname === "/api/state") {
         sendJson(res, 200, await buildState(repoRoot, url.searchParams.get("fresh") === "1"));
       } else if (url.pathname === "/api/agents" && req.method === "GET") {
-        sendJson(res, 200, { agents: serializeAgents() });
+        sendJson(res, 200, { agents: serializeAgents(repoRoot) });
+      } else if (/^\/api\/agents\/[^/]+\/log$/.test(url.pathname) && req.method === "GET") {
+        sendJson(res, 200, { lines: agentLog(repoRoot, url.pathname.split("/")[3]) });
+      } else if (/^\/api\/agents\/[^/]+\/retry$/.test(url.pathname) && req.method === "POST") {
+        const src = serializeAgents(repoRoot).find((a) => a.id === url.pathname.split("/")[3]);
+        if (!src || src.prompt === "(prompt not recorded)") {
+          sendJson(res, 400, { error: "no recorded prompt to retry" });
+        } else {
+          const agent = launchAgent(repoRoot, src.prompt, src.permission_mode === "?" ? "acceptEdits" : src.permission_mode,
+            { tools: src.tools, workflow: src.workflow });
+          sendJson(res, 200, { id: agent.id, status: agent.status });
+        }
+      } else if (/^\/api\/agents\/[^/]+\/resume$/.test(url.pathname) && req.method === "POST") {
+        const src = serializeAgents(repoRoot).find((a) => a.id === url.pathname.split("/")[3]);
+        const body = JSON.parse((await readBody(req)) || "{}") as { prompt?: string };
+        const prompt = String(body.prompt ?? "").trim();
+        if (!src?.session_id) {
+          sendJson(res, 400, { error: "run has no recorded session_id to resume" });
+        } else if (!prompt) {
+          sendJson(res, 400, { error: "prompt required" });
+        } else {
+          const agent = launchAgent(repoRoot, prompt.slice(0, 8000),
+            src.permission_mode === "?" ? "acceptEdits" : src.permission_mode,
+            { tools: src.tools, workflow: src.workflow, resumeSessionId: src.session_id });
+          sendJson(res, 200, { id: agent.id, status: agent.status });
+        }
+      } else if (/^\/api\/sessions\/[^/]+$/.test(url.pathname) && req.method === "GET") {
+        const detail = sessionDetail(repoRoot, url.pathname.split("/")[3]);
+        if (detail) sendJson(res, 200, detail);
+        else sendJson(res, 404, { error: "unknown session" });
+      } else if (url.pathname === "/api/workflows/run" && req.method === "POST") {
+        const body = JSON.parse((await readBody(req)) || "{}") as { name?: string };
+        const wf = collectWorkflows(repoRoot).find((w) => w.name === String(body.name ?? ""));
+        if (!wf) {
+          sendJson(res, 400, { error: "unknown workflow" });
+        } else {
+          const agent = launchAgent(
+            repoRoot,
+            `Execute the workflow script at ${wf.file} using the Workflow tool (pass {scriptPath: ${JSON.stringify(wf.file)}}). ` +
+              `Wait for it to complete and report the returned result concisely.`,
+            "acceptEdits",
+            { workflow: wf.name },
+          );
+          sendJson(res, 200, { id: agent.id, status: agent.status, workflow: wf.name });
+        }
+      } else if (url.pathname === "/api/node" && req.method === "GET") {
+        sendJson(res, 200, await nodeDetail(repoRoot, url.searchParams.get("id") ?? ""));
       } else if (url.pathname === "/api/agents/launch" && req.method === "POST") {
         const body = JSON.parse((await readBody(req)) || "{}") as
           { prompt?: string; permission_mode?: string; tools?: AgentTools };
@@ -1103,7 +1302,7 @@ async function main(): Promise<void> {
           sendJson(res, 400, { error: "prompt required" });
         } else {
           const agent = launchAgent(
-            repoRoot, prompt.slice(0, 8000), String(body.permission_mode ?? "acceptEdits"), body.tools ?? {});
+            repoRoot, prompt.slice(0, 8000), String(body.permission_mode ?? "acceptEdits"), { tools: body.tools ?? {} });
           sendJson(res, 200, { id: agent.id, status: agent.status });
         }
       } else if (/^\/api\/agents\/[^/]+\/kill$/.test(url.pathname) && req.method === "POST") {

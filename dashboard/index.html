@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Nox · dev-flow-control</title>
 <link rel="stylesheet" href="app.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><circle cx='8' cy='8' r='7' fill='%237c5cff'/></svg>">
 </head>
 <body>
 <div class="aurora"></div>
@@ -128,12 +129,17 @@
     <summary><span class="dot dot-teal"></span>Code Map<span class="hint" id="codemap-hint"></span></summary>
     <div class="body">
       <div class="graph-toolbar">
+        <div class="view-toggle">
+          <button id="graph-view-visual" class="mini-btn active">✦ visual</button>
+          <button id="graph-view-systems" class="mini-btn">☰ systems</button>
+        </div>
         <input id="graph-search" placeholder="Search nodes (label or file)…">
         <span id="graph-info" class="dim"></span>
         <a id="graph-full" href="/gout/graph.html" target="_blank">full graphify view ↗</a>
       </div>
       <div class="graph-wrap">
         <canvas id="graph-canvas"></canvas>
+        <div id="graph-systems" class="graph-systems" hidden></div>
         <div id="graph-card" class="graph-card" hidden></div>
       </div>
     </div>
