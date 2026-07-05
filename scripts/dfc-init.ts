@@ -14,6 +14,7 @@ const GITIGNORE_LINES = [
   ".dfc/*.env",
   "!.dfc/*.example.env",
   ".dfc/dev-memory/",
+  ".dfc/worktrees/",
   "graphify-out/",
   ".agent-runs/",
 ];

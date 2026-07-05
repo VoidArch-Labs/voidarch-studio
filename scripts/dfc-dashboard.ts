@@ -65,6 +65,26 @@ function git(repoRoot: string, ...argv: string[]): string {
   }
 }
 
+function gitRequired(repoRoot: string, ...argv: string[]): string {
+  try {
+    return execFileSync("git", ["-C", repoRoot, ...argv], { encoding: "utf8", timeout: 15_000 }).trim();
+  } catch (err) {
+    const e = err as { stderr?: Buffer | string; message?: string };
+    const stderr = Buffer.isBuffer(e.stderr) ? e.stderr.toString("utf8") : String(e.stderr ?? "");
+    throw new Error((stderr || e.message || "git command failed").trim());
+  }
+}
+
+/** Untrimmed git output — porcelain status lines start with a significant space
+ *  (" M file"), which the trimming helpers above would eat on the first line. */
+function gitRaw(repoRoot: string, ...argv: string[]): string {
+  try {
+    return execFileSync("git", ["-C", repoRoot, ...argv], { encoding: "utf8", timeout: 15_000 });
+  } catch {
+    return "";
+  }
+}
+
 function readJson(path: string): unknown {
   try {
     return JSON.parse(readFileSync(path, "utf8"));
@@ -92,6 +112,351 @@ function readJsonl(path: string): Array<Record<string, unknown>> {
     return out;
   } catch {
     return [];
+  }
+}
+
+// ---- Studio worktrees (git is the source of truth) ----------------------------------
+
+interface StudioWorktree {
+  id: string;
+  path: string;
+  branch: string;
+  baseCommit: string;
+  dirty: boolean;
+  changedFiles: number;
+}
+
+interface WorktreeDiffFile {
+  path: string;
+  status: string;
+}
+
+const WORKTREE_ID_RE = /^[a-z0-9-]+$/;
+
+function worktreesRoot(repoRoot: string): string {
+  return join(repoRoot, ".dfc", "worktrees");
+}
+
+function slugifyWorktreeId(input: string): string {
+  return input
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48) || "worktree";
+}
+
+function uniqueWorktreeId(repoRoot: string, base: string): string {
+  const root = worktreesRoot(repoRoot);
+  const stem = slugifyWorktreeId(base);
+  for (let i = 0; i < 100; i++) {
+    const id = i === 0 ? stem : `${stem}-${i + 1}`;
+    if (!existsSync(join(root, id))) return id;
+  }
+  return `${stem}-${Date.now().toString(36)}`;
+}
+
+function validateWorktreeId(id: string): string | undefined {
+  const clean = id.trim();
+  return WORKTREE_ID_RE.test(clean) ? clean : undefined;
+}
+
+function worktreePathForId(repoRoot: string, id: string): string | undefined {
+  const clean = validateWorktreeId(id);
+  if (!clean) return undefined;
+  const root = normalize(worktreesRoot(repoRoot));
+  const path = normalize(join(root, clean));
+  return path === root || !path.startsWith(`${root}/`) ? undefined : path;
+}
+
+function parseStatusFiles(status: string): WorktreeDiffFile[] {
+  return status.split("\n")
+    .map((line) => line.trimEnd())
+    .filter(Boolean)
+    .map((line) => {
+      const code = line.slice(0, 2).trim() || "changed";
+      const rawPath = line.slice(3).trim();
+      const path = rawPath.includes(" -> ") ? rawPath.split(" -> ").at(-1) ?? rawPath : rawPath;
+      return { path, status: code };
+    });
+}
+
+function parseWorktreePorcelain(output: string): Array<{ path: string; branch: string; baseCommit: string }> {
+  const entries: Array<{ path: string; branch: string; baseCommit: string }> = [];
+  let current: { path: string; branch: string; baseCommit: string } | undefined;
+  const flush = () => {
+    if (current?.path) entries.push(current);
+    current = undefined;
+  };
+  for (const line of `${output}\n`.split("\n")) {
+    if (!line.trim()) {
+      flush();
+      continue;
+    }
+    const [key, ...rest] = line.split(" ");
+    const value = rest.join(" ");
+    if (key === "worktree") current = { path: value, branch: "(detached)", baseCommit: "" };
+    else if (current && key === "HEAD") current.baseCommit = value;
+    else if (current && key === "branch") current.branch = value.replace(/^refs\/heads\//, "");
+  }
+  return entries;
+}
+
+function listStudioWorktrees(repoRoot: string): StudioWorktree[] {
+  const root = normalize(worktreesRoot(repoRoot));
+  const raw = git(repoRoot, "worktree", "list", "--porcelain");
+  if (!raw) return [];
+  return parseWorktreePorcelain(raw)
+    .filter((w) => normalize(w.path).startsWith(`${root}/`))
+    .map((w) => {
+      const status = gitRaw(w.path, "status", "--porcelain");
+      const files = parseStatusFiles(status);
+      return {
+        id: basename(w.path),
+        path: w.path,
+        branch: w.branch,
+        baseCommit: w.baseCommit,
+        dirty: files.length > 0,
+        changedFiles: files.length,
+      };
+    })
+    .filter((w) => WORKTREE_ID_RE.test(w.id));
+}
+
+function createStudioWorktree(
+  repoRoot: string,
+  body: { taskId?: string; branch?: string; baseRef?: string },
+): Record<string, unknown> {
+  try {
+    const taskId = String(body.taskId ?? "").trim();
+    if (!taskId) return { error: "taskId required" };
+    const baseRef = String(body.baseRef ?? "HEAD").trim() || "HEAD";
+    const id = uniqueWorktreeId(repoRoot, String(body.branch ?? taskId));
+    const branch = String(body.branch ?? `studio/${id}`).trim();
+    if (!git(repoRoot, "check-ref-format", "--branch", branch)) return { error: "invalid branch" };
+    const root = worktreesRoot(repoRoot);
+    const path = join(root, id);
+    mkdirSync(root, { recursive: true });
+    const baseCommit = gitRequired(repoRoot, "rev-parse", baseRef);
+    gitRequired(repoRoot, "worktree", "add", path, "-b", branch, baseRef);
+    return { id, path, branch, baseCommit };
+  } catch (err) {
+    return { error: (err as Error).message };
+  }
+}
+
+function diffStudioWorktree(repoRoot: string, id: string): Record<string, unknown> {
+  try {
+    const path = worktreePathForId(repoRoot, id);
+    if (!path || !existsSync(path)) return { error: "unknown worktree" };
+    const status = gitRaw(path, "status", "--porcelain");
+    const unstaged = git(path, "diff", "--");
+    const staged = git(path, "diff", "--cached", "--");
+    return {
+      id,
+      path,
+      files: parseStatusFiles(status),
+      diff: [unstaged, staged].filter(Boolean).join("\n"),
+    };
+  } catch (err) {
+    return { error: (err as Error).message };
+  }
+}
+
+function deleteStudioWorktree(repoRoot: string, id: string, force: boolean): Record<string, unknown> {
+  try {
+    const path = worktreePathForId(repoRoot, id);
+    if (!path || !existsSync(path)) return { error: "unknown worktree" };
+    const files = parseStatusFiles(gitRaw(path, "status", "--porcelain"));
+    if (files.length && !force) {
+      return { error: "worktree is dirty; retry with force=1", dirty: true, changedFiles: files.length };
+    }
+    gitRequired(repoRoot, "worktree", "remove", ...(force ? ["--force"] : []), path);
+    return { id, removed: true };
+  } catch (err) {
+    return { error: (err as Error).message };
+  }
+}
+
+// ---- Studio runs (records only; the native app owns process execution) ---------------
+
+type StudioRunStatus = "running" | "done" | "failed";
+
+interface StudioRunRecord {
+  id: string;
+  taskId: string;
+  provider: string;
+  model?: string;
+  promptProfileId?: string;
+  promptHash?: string;
+  worktreeId?: string;
+  transcriptPath: string;
+  startedAt: string;
+  finishedAt?: string;
+  status: StudioRunStatus;
+  changedFiles: string[];
+  exitCode?: number;
+  notes?: string;
+}
+
+const studioRunCache = new Map<string, StudioRunRecord>();
+
+function studioRunsDir(repoRoot: string): string {
+  return join(repoRoot, ".agent-runs", "studio");
+}
+
+function newStudioRunId(): string {
+  return `studio-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+}
+
+function normalizeStudioRun(row: Record<string, unknown>): StudioRunRecord {
+  return {
+    id: String(row.studio_run_id ?? row.id ?? ""),
+    taskId: String(row.taskId ?? ""),
+    provider: String(row.provider ?? ""),
+    model: row.model ? String(row.model) : undefined,
+    promptProfileId: row.promptProfileId ? String(row.promptProfileId) : undefined,
+    promptHash: row.promptHash ? String(row.promptHash) : undefined,
+    worktreeId: row.worktreeId ? String(row.worktreeId) : undefined,
+    transcriptPath: String(row.transcriptPath ?? ""),
+    startedAt: String(row.startedAt ?? row.started_at ?? ""),
+    finishedAt: row.finishedAt ? String(row.finishedAt) : undefined,
+    status: row.status === "done" || row.status === "failed" ? row.status : "running",
+    changedFiles: Array.isArray(row.changedFiles) ? row.changedFiles.map(String) : [],
+    exitCode: typeof row.exitCode === "number" ? row.exitCode : undefined,
+    notes: row.notes ? String(row.notes) : undefined,
+  };
+}
+
+async function listStudioRuns(repoRoot: string): Promise<StudioRunRecord[]> {
+  if (!memoryConfigured(repoRoot)) return [];
+  try {
+    return await withDbSerial(async (db, c) => {
+      const rows = await queryResult<Array<Record<string, unknown>>>(
+        db,
+        `SELECT * FROM studio_run
+         WHERE repo_id = $repo
+         ORDER BY startedAt DESC LIMIT 50`,
+        { repo: c.repoId },
+      );
+      const byId = new Map<string, StudioRunRecord>(studioRunCache);
+      for (const row of rows) {
+        const run = normalizeStudioRun(row);
+        byId.set(run.id, run);
+      }
+      const runs = [...byId.values()].sort((a, b) => (a.startedAt < b.startedAt ? 1 : -1)).slice(0, 50);
+      for (const run of runs) studioRunCache.set(run.id, run);
+      return runs;
+    }, repoRoot);
+  } catch {
+    return [...studioRunCache.values()].sort((a, b) => (a.startedAt < b.startedAt ? 1 : -1)).slice(0, 50);
+  }
+}
+
+async function getStudioRun(repoRoot: string, id: string): Promise<StudioRunRecord | undefined> {
+  const cached = studioRunCache.get(id);
+  if (cached) return cached;
+  if (!memoryConfigured(repoRoot)) return undefined;
+  try {
+    return await withDbSerial(async (db, c) => {
+      const rows = await queryResult<Array<Record<string, unknown>>>(
+        db,
+        `SELECT * FROM studio_run
+         WHERE repo_id = $repo AND studio_run_id = $id
+         LIMIT 1`,
+        { repo: c.repoId, id },
+      );
+      const run = rows[0] ? normalizeStudioRun(rows[0]) : undefined;
+      if (run) studioRunCache.set(run.id, run);
+      return run;
+    }, repoRoot);
+  } catch {
+    return undefined;
+  }
+}
+
+async function createStudioRun(
+  repoRoot: string,
+  body: {
+    taskId?: string;
+    worktreeId?: string;
+    provider?: string;
+    model?: string;
+    promptProfileId?: string;
+    promptHash?: string;
+    transcriptPath?: string;
+  },
+): Promise<Record<string, unknown>> {
+  if (!memoryConfigured(repoRoot)) return { error: "dev-memory not configured" };
+  const taskId = String(body.taskId ?? "").trim();
+  const provider = String(body.provider ?? "").trim();
+  if (!taskId) return { error: "taskId required" };
+  if (!provider) return { error: "provider required" };
+  const id = newStudioRunId();
+  const now = new Date().toISOString();
+  const transcriptPath = String(body.transcriptPath ?? join(studioRunsDir(repoRoot), `${id}.txt`));
+  mkdirSync(studioRunsDir(repoRoot), { recursive: true });
+  try {
+    return await withDbSerial(async (db, c) => {
+      const doc = {
+        repo_id: c.repoId,
+        studio_run_id: id,
+        taskId,
+        worktreeId: body.worktreeId ? String(body.worktreeId) : undefined,
+        provider,
+        model: body.model ? String(body.model) : undefined,
+        promptProfileId: body.promptProfileId ? String(body.promptProfileId) : undefined,
+        promptHash: body.promptHash ? String(body.promptHash) : undefined,
+        transcriptPath,
+        startedAt: now,
+        started_at: now,
+        status: "running",
+        changedFiles: [],
+        created_at: now,
+      };
+      await db.create(new Table("studio_run")).content(doc);
+      studioRunCache.set(id, normalizeStudioRun(doc));
+      return { id, status: "running", transcriptPath };
+    }, repoRoot);
+  } catch (err) {
+    return { error: (err as Error).message };
+  }
+}
+
+async function finishStudioRun(
+  repoRoot: string,
+  id: string,
+  body: { status?: string; exitCode?: unknown; changedFiles?: unknown; notes?: string },
+): Promise<Record<string, unknown>> {
+  if (!memoryConfigured(repoRoot)) return { error: "dev-memory not configured" };
+  const status = String(body.status ?? "").trim();
+  if (status !== "done" && status !== "failed") return { error: "status must be done or failed" };
+  const changedFiles = Array.isArray(body.changedFiles) ? body.changedFiles.map(String) : [];
+  const exitCode = typeof body.exitCode === "number" ? body.exitCode : undefined;
+  const now = new Date().toISOString();
+  try {
+    return await withDbSerial(async (db, c) => {
+      const patch: Record<string, unknown> = {
+        status,
+        finishedAt: now,
+        ended_at: now,
+        changedFiles,
+        notes: body.notes ? String(body.notes) : undefined,
+      };
+      if (exitCode !== undefined) patch.exitCode = exitCode;
+      const rows = await queryResult<Array<Record<string, unknown>>>(
+        db,
+        `UPDATE studio_run MERGE $patch
+         WHERE repo_id = $repo AND studio_run_id = $id
+         RETURN AFTER`,
+        { repo: c.repoId, id, patch },
+      );
+      if (!rows[0]) return { error: "unknown run" };
+      const run = normalizeStudioRun(rows[0]);
+      studioRunCache.set(run.id, run);
+      return { ...run };
+    }, repoRoot);
+  } catch (err) {
+    return { error: (err as Error).message };
   }
 }
 
@@ -1525,6 +1890,8 @@ async function buildState(repoRoot: string, fresh: boolean): Promise<Record<stri
     health: collectHealth(repoRoot),
     sessions: collectSessions(repoRoot),
     spawned_agents: serializeAgents(repoRoot),
+    worktrees: listStudioWorktrees(repoRoot),
+    studio_runs: await listStudioRuns(repoRoot),
     recent_events: readJsonl(join(repoRoot, ".agent-runs", "current.jsonl")).slice(-60).reverse(),
     approvals: collectApprovals(repoRoot),
     graph: collectGraph(repoRoot),
@@ -1660,6 +2027,47 @@ async function main(): Promise<void> {
         const body = JSON.parse((await readBody(req)) || "{}") as { id?: string; status?: string };
         const result = await setTaskStatus(repoRoot, String(body.id ?? ""), String(body.status ?? ""));
         tasksCache = undefined;
+        sendJson(res, result.error ? 400 : 200, result);
+      } else if (url.pathname === "/api/worktrees" && req.method === "GET") {
+        sendJson(res, 200, { worktrees: listStudioWorktrees(repoRoot) });
+      } else if (url.pathname === "/api/worktrees" && req.method === "POST") {
+        const body = JSON.parse((await readBody(req)) || "{}") as { taskId?: string; branch?: string; baseRef?: string };
+        const result = createStudioWorktree(repoRoot, body);
+        sendJson(res, result.error ? 400 : 200, result);
+      } else if (/^\/api\/worktrees\/[^/]+\/diff$/.test(url.pathname) && req.method === "GET") {
+        const id = decodeURIComponent(url.pathname.split("/")[3] ?? "");
+        const result = diffStudioWorktree(repoRoot, id);
+        sendJson(res, result.error ? 404 : 200, result);
+      } else if (/^\/api\/worktrees\/[^/]+$/.test(url.pathname) && req.method === "DELETE") {
+        const id = decodeURIComponent(url.pathname.split("/")[3] ?? "");
+        const result = deleteStudioWorktree(repoRoot, id, url.searchParams.get("force") === "1");
+        sendJson(res, result.error ? 400 : 200, result);
+      } else if (url.pathname === "/api/runs" && req.method === "GET") {
+        sendJson(res, 200, { runs: await listStudioRuns(repoRoot) });
+      } else if (url.pathname === "/api/runs" && req.method === "POST") {
+        const body = JSON.parse((await readBody(req)) || "{}") as {
+          taskId?: string;
+          worktreeId?: string;
+          provider?: string;
+          model?: string;
+          promptProfileId?: string;
+          promptHash?: string;
+          transcriptPath?: string;
+        };
+        const result = await createStudioRun(repoRoot, body);
+        sendJson(res, result.error ? 400 : 200, result);
+      } else if (/^\/api\/runs\/[^/]+$/.test(url.pathname) && req.method === "GET") {
+        const run = await getStudioRun(repoRoot, decodeURIComponent(url.pathname.split("/")[3] ?? ""));
+        if (run) sendJson(res, 200, run);
+        else sendJson(res, 404, { error: "unknown run" });
+      } else if (/^\/api\/runs\/[^/]+\/finish$/.test(url.pathname) && req.method === "POST") {
+        const body = JSON.parse((await readBody(req)) || "{}") as {
+          status?: string;
+          exitCode?: unknown;
+          changedFiles?: unknown;
+          notes?: string;
+        };
+        const result = await finishStudioRun(repoRoot, decodeURIComponent(url.pathname.split("/")[3] ?? ""), body);
         sendJson(res, result.error ? 400 : 200, result);
       } else if (url.pathname === "/api/vectors" && req.method === "GET") {
         sendJson(res, 200, await collectVectors(repoRoot));
