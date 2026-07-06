@@ -1,264 +1,234 @@
-# Voidarch Studio — agent orchestration control room (+ home of Voidarch Context)
+# Voidarch
 
-Two products, one repo (formerly **dev-flow-control / Nox**; `dfc` survives only as a legacy
-internal command prefix):
+**Local-first memory and orchestration for AI coding agents.**
 
-- **[Voidarch Context](packages/voidarch-context/README.md)** (`@voidarch/context`, in
-  [`packages/voidarch-context/`](packages/voidarch-context/)) — a standalone, drop-in local
-  repo **memory / query / context-pack engine** for AI coding agents: if it retrieves,
-  remembers, indexes, searches, or explains repo context, it's Context. Installable via npm,
-  no Docker/Python/API key. See its README for install, quickstart, and the
-  `voidarch-context` CLI.
-- **Voidarch Studio** (this repo) — a power-user **agent orchestration control room**:
-  worktrees, terminal/PTY, agent launching, prompt/provider routing, hooks, observability,
-  the per-repo web dashboard (`pnpm dfc:dashboard`), and the native SwiftUI shell
-  ([`studio/`](studio/)). If it launches, routes, controls, observes, approves, or manages
-  agents, it's Studio. Planned Studio modules are feature-flagged (`pnpm dfc:flags`) and
-  never presented as implemented until they are.
+Voidarch is two products in one monorepo:
 
-Historically this repo is a Claude Code plugin pack for **subscription-first,
-token-efficient, higher-autonomy, higher-accuracy** autonomous development. It turns Claude
-Code into a development *supervisor* instead of a terminal janitor: Claude reasons and
-routes, while specialized tools handle Git state, repo indexing, current docs, web
-extraction, verification, security checks, async branch work, and workflow visibility.
+- **[Voidarch Context](packages/voidarch-context/README.md)** (`@voidarch/context`) — a standalone, drop-in **repo memory / query / context-pack engine**. Index a repo, remember decisions, and hand any agent a token-budgeted context pack — one npm install, no Docker, no Python, no API key.
+- **Voidarch Studio** — a power-user **agent orchestration control room**: worktrees, terminal/PTY, agent launching, prompt/provider routing, safety hooks, observability, a per-repo web dashboard, and a native SwiftUI shell.
 
-> Context windows are not landfill. This plugin makes a large tool ecosystem *available*
-> without loading all of it into every session.
+The boundary rule: *if it retrieves, remembers, indexes, searches, or explains repo context, it's **Context**; if it launches, routes, controls, observes, approves, or manages agents, it's **Studio***. Studio builds on Context; Context never needs Studio.
 
-## Goals
+> Context windows are not landfill. Voidarch makes a large tool ecosystem *available* to your agent without loading all of it into every session.
 
-1. **Lower token usage** — skills stay available but unloaded until needed; noisy repo
-   exploration moves to subagents; a repo graph precedes raw file reads; Git plumbing is
-   offloaded to GitKraken/Kepler; GitHub MCP stays read-only; docs/web stay gated.
-2. **Higher safe autonomy** — GSD drives the phase loop; scoped subagents and Jules execute;
-   hooks enforce deterministic safety; runs and approvals are logged.
-3. **Higher accuracy** — repo-graph lookup before broad reads; Context7 for version-sensitive
-   docs; deterministic tests/lint/typecheck/build/CI/security; PR + security review before Ship.
-4. **Subscription-first** — flat-rate product surfaces by default. Paid/gateway routes
-   (API gateways, `ANTHROPIC_BASE_URL`, Bedrock/Vertex/OpenRouter, paid Firecrawl, automated
-   Jules API sessions) require explicit user approval.
+*(Formerly `dev-flow-control` / Nox. `dfc` survives only as a legacy internal command prefix — see [Legacy naming](#legacy-naming--compatibility).)*
 
-## Status
+---
 
-**v0.4.0 — drop-in development-control plugin.** Ships the manifest, 17 skills (7 workflow +
-10 `/dfc-*` dev-memory/dashboard/setup — legacy names kept for compatibility), 10 agents,
-7 fail-closed hooks, a **per-repo web dashboard** (`pnpm dfc:dashboard`), a one-shot
-target-repo scaffold (`pnpm dfc:init`), the read-only GitHub MCP config,
-`CLAUDE.md`/`AGENTS.md` templates, 9 flow docs, and optional MCP examples. Manifest
-validation (`claude plugin validate`), typecheck, hook harness, and dashboard/init smoke
-tests pass; see the roadmap for what is still only partially live-validated.
+## Table of contents
 
-## Shared dev-memory (Voidarch Context)
+- [Why Voidarch](#why-voidarch)
+- [Repository layout](#repository-layout)
+- [Voidarch Context — the memory engine](#voidarch-context--the-memory-engine)
+  - [Quickstart](#quickstart-3-minutes)
+  - [CLI surface](#cli-surface)
+  - [Memory channels](#memory-channels)
+  - [Embeddings](#embeddings)
+  - [Using it from Claude Code, Codex, and other agents](#using-it-from-claude-code-codex-and-other-agents)
+  - [Target-repo mode & hosted backend](#target-repo-mode--hosted-backend)
+- [Voidarch Studio — the control room](#voidarch-studio--the-control-room)
+  - [Web dashboard](#web-dashboard)
+  - [Native SwiftUI app](#native-swiftui-app)
+  - [Feature flags](#feature-flags)
+- [The Claude Code plugin](#the-claude-code-plugin)
+  - [Goals](#goals)
+  - [Skills](#skills-skills)
+  - [Agents](#agents-agents)
+  - [Hooks](#hooks-hookshooksjson--scripts)
+  - [MCP](#mcp-mcpjson)
+  - [Templates & docs](#templates--docs-templates)
+  - [Installation — drop into any repo](#installation--drop-into-any-repo)
+  - [Safety & approval gates](#safety--approval-gates)
+- [Architecture](#architecture)
+- [Development](#development)
+- [Legacy naming & compatibility](#legacy-naming--compatibility)
+- [Roadmap](#roadmap)
+- [License](#license)
 
-The memory/query engine lives in **`@voidarch/context`**
-([`packages/voidarch-context/`](packages/voidarch-context/README.md)) — an agent-neutral
-CLI (`voidarch-context`) backed by **SurrealDB**: embedded SurrealKV inside the repo by
-default (zero config), or a hosted instance for shared multi-machine memory. One per-repo
-dev-memory database that every agent reads and writes:
+---
 
-- **Claude Code** compatibility is supported through
-  [`skills/dfc-context/SKILL.md`](skills/dfc-context/SKILL.md) (the `/dfc-context`
-  skill — legacy name) and `voidarch-context snippets`.
-- **Codex and future agents** use the same CLI, wired through [`AGENTS.md`](AGENTS.md).
-- The dev-memory layer is **agent-neutral**: nothing about the Claude plugin depends on
-  Codex; the CLI is the common interface and SurrealDB is the single shared backend.
-- The `pnpm dfc:*` scripts in this repo are **legacy internal aliases** that call the same
-  package scripts; new usage should prefer the `voidarch-context` CLI.
+## Why Voidarch
 
-Architecture and rationale: [`docs/dev-flow-control-spec.md`](docs/dev-flow-control-spec.md)
-(historical spec, pre-rename naming), [`docs/spec-delta-surrealdb.md`](docs/spec-delta-surrealdb.md), and
-[`docs/dev-memory-surreal-first-round.md`](docs/dev-memory-surreal-first-round.md).
+AI coding agents have two structural problems:
 
-### Quickstart (zero config — embedded SurrealKV)
+1. **Amnesia.** Every session re-discovers the same repo facts, re-reads the same files, and forgets every decision when the context window closes. That's wasted tokens and repeated mistakes.
+2. **Chaos at scale.** Once you run more than one agent — local subagents, async PR workers, headless runs — you need somewhere to launch, watch, route, gate, and audit them.
 
-The default backend is an **embedded SurrealDB (SurrealKV)** database at
-`.dfc/dev-memory/` inside the repo — no server, no credentials, nothing to copy:
+Voidarch Context solves the first problem: a persistent, local, per-repo brain (indexed files, code graph, doc search, embeddings, durable memories) assembled on demand into one context pack. Voidarch Studio solves the second: a control room over agents, sessions, tokens, and approvals — with deterministic, fail-closed safety hooks rather than vibes.
+
+Design principles across both:
+
+- **Local-first.** Embedded database inside the repo, local embedding model, localhost-only servers, zero telemetry. Remote anything (hosted DB, paid embeddings, web extraction) is explicit and opt-in.
+- **Subscription-first.** Flat-rate product surfaces by default; paid/gateway routes (API gateways, `ANTHROPIC_BASE_URL`, Bedrock/Vertex/OpenRouter, paid Firecrawl, automated Jules API sessions) require explicit approval.
+- **Agent-neutral memory.** Claude Code, Codex, and future agents read and write the same per-repo database through the same CLI.
+- **Honest surfaces.** Planned modules are feature-flagged and never presented as implemented until they are.
+
+## Repository layout
+
+```
+packages/voidarch-context/   @voidarch/context — the standalone memory engine (npm package)
+  bin/voidarch-context.js      CLI entrypoint
+  src/                         ingest, docs, graph, vectors, scoring, context-pack, surreal
+  scripts/                     one command ≈ one script (legacy dfc-*.ts filenames, internal)
+  schema/                      SurrealDB migrations (auto-applied for embedded DBs)
+  page/                        local info/search/context page (voidarch-context serve)
+  docs/product-page.md         product copy
+dashboard/                   Studio web dashboard client (single page, no deps)
+scripts/                     Studio-side entrypoints (dashboard, init scaffold, flags, grok-build)
+studio/                      Voidarch Studio native SwiftUI shell (macOS 14+)
+skills/                      Claude Code skills (workflow + memory; legacy /dfc-* names)
+agents/                      scoped subagent definitions
+hooks/                       fail-closed safety + observability hooks
+workflows/                   bundled multi-agent workflows (review / understand / preship)
+templates/                   CLAUDE.md/AGENTS.md templates, flow docs, MCP examples
+docs/                        specs, MVP boundary docs, validation reports
+.claude-plugin/plugin.json   Claude Code plugin manifest (voidarch-studio)
+```
+
+---
+
+## Voidarch Context — the memory engine
+
+Full docs: [`packages/voidarch-context/README.md`](packages/voidarch-context/README.md) · product page: [`docs/product-page.md`](packages/voidarch-context/docs/product-page.md)
+
+### Quickstart (3 minutes)
 
 ```bash
-pnpm install
-pnpm dfc:db:migrate
-pnpm dfc:ingest --agent claude
-pnpm dfc:context --task "Inspect the plugin architecture" --agent claude
+npm install -g @voidarch/context
+cd your-repo
+voidarch-context init                      # .voidarch/config.json + .gitignore entries
+voidarch-context ingest                    # index the repo
+voidarch-context context "fix the auth token refresh bug"
 ```
 
-One constraint: SurrealKV allows **one process at a time** (a `LOCK` file in the data
-directory). Never run two `dfc` commands concurrently against the same embedded database —
-a second command waits, then fails with a lock-timeout error. A killed process can leave
-the database briefly locked.
+The third command prints a Markdown context pack — relevant files, symbols, doc excerpts, memories, open tasks/blockers — ready to paste into any agent. The backend is an **embedded SurrealDB (SurrealKV)** database at `.voidarch/db/` inside the repo: no server, no credentials, gitignored.
 
-**Hosted alternative** (shared multi-machine memory): copy
-`.dfc/surreal.example.env` to `.dfc/surreal.env`, uncomment the `wss://` block, and fill
-in real values. `.dfc/surreal.env` is gitignored — never commit real credentials, and
-never print or commit `DFC_SURREAL_PASS`. Canonical defaults: `DFC_SURREAL_NS=dev_flow_control`,
-`DFC_SURREAL_DB=repo_dev_flow_control`, `DFC_REPO_ID=dev-flow-control`.
+One constraint: SurrealKV allows **one process at a time** (a `LOCK` file in the data directory). Don't run two commands concurrently against the same embedded database; a killed process can leave it briefly locked.
 
-### Target repo mode
+### CLI surface
 
-The `dfc` CLI can run from the plugin package while targeting another repository:
-
-```bash
-pnpm --dir /path/to/dev-flow-control dfc:context \
-  --task "Inspect this app" \
-  --agent claude \
-  --repo-root /path/to/target-repo
-```
-
-Resolution order for the target root is:
-
-1. `--repo-root <path>`
-2. `DFC_TARGET_REPO_ROOT`
-3. `CLAUDE_PROJECT_DIR`
-4. current shell working directory
-5. the plugin repo itself
-
-Config file precedence is:
-
-```text
-process.env > target .dfc/*.env > plugin .dfc/*.env/templates
-```
-
-This lets one installed plugin serve many repos while each repo keeps its own
-database identity:
-
-| Repo | `DFC_REPO_ID` | `DFC_SURREAL_DB` |
-| --- | --- | --- |
-| `dev-flow-control` | `dev-flow-control` | `repo_dev_flow_control` |
-| `career-ops` | `career-ops` | `repo_career_ops` |
-| `my-app` | `my-app` | `repo_my_app` |
-
-Target repos should ignore local memory config and generated state:
-
-```gitignore
-.dfc/*.env
-!.dfc/*.example.env
-.dfc/dev-memory/
-graphify-out/
-.agent-runs/
-```
-
-The bundled Claude memory skills already run from `CLAUDE_PLUGIN_ROOT` and pass
-`--repo-root "${CLAUDE_PROJECT_DIR:-$PWD}"`, so `/dfc-context`, `/dfc-ingest`,
-`/dfc-status`, `/dfc-search`, `/dfc-graph`, `/dfc-remember`, and
-`/dfc-session-recap` target the active Claude project.
-
-New repo setup checklist: [`docs/adding-to-new-repo.md`](docs/adding-to-new-repo.md).
-
-For large repos or small hosted SurrealDB instances, use bounded resumable writes:
-
-```bash
-pnpm dfc:ingest --repo-root /path/to/target-repo --limit 50
-pnpm dfc:docs:ingest --repo-root /path/to/target-repo --limit 10
-```
-
-`dfc:ingest` skips unchanged file hashes and reports how many changed files remain
-limited. Both file and docs discovery skip generated agent worktrees such as
-`.claude/worktrees/`, `.codex/worktrees/`, and `.agent-worktrees/`.
+| Command | What it does |
+|---|---|
+| `init` | scaffold `.voidarch/config.json` + `.gitignore` entries |
+| `ingest` | index repo text files (default-deny by extension; secrets never stored) |
+| `search "..."` | rank document chunks (BM25 full-text; `--dry-run` works with no DB) |
+| `query "..."` | rank code-graph nodes + neighborhood edges |
+| `context "..."` | build a token-budgeted Markdown/JSON context pack across all channels |
+| `remember --kind <k> "..."` | record a durable memory (`decision`, `evidence`, `lesson`, `snippet`, `repo_fact`, `task_note`) |
+| `memory <add\|list\|search\|get\|update\|delete>` | full CRUD over memories |
+| `task` / `blocker` | lightweight task + blocker state (shows up in context packs) |
+| `status` | counts + freshness across all channels |
+| `serve` | local info/search/context page (default `http://localhost:4950`) |
+| `doctor` | health report across DB, ingest, docs, graph, vectors, memory |
+| `embed` | embed indexed content for semantic retrieval (approval-gated when paid) |
+| `docs` / `graph` / `db` / `models` / `config` / `metrics` / `sync` / `snippets` | see `voidarch-context help` |
 
 ### Memory channels
 
-SurrealDB is the **single** shared backend. Each channel is a *retrieval* lane folded
-into one token-budgeted context pack — none replaces BM25 or the graph:
+SurrealDB is the **single** shared backend. Each channel is a *retrieval* lane folded into one token-budgeted context pack — none replaces BM25 or the graph:
 
-| Channel | Tables | Ingest | Query | State |
-| --- | --- | --- | --- | --- |
-| Repo files (BM25) | `file` | `pnpm dfc:ingest` | via `/dfc-context` | implemented |
-| Document chunks (BM25) | `document`, `doc_chunk` | `pnpm dfc:docs:ingest` | `pnpm dfc:docs:query` | implemented |
-| Graph (direct, Rust) | `graph_snapshot/node/edge/hyperedge` | `pnpm dfc:graph:build` (graphify-surreal → SurrealDB, no JSON step) | `pnpm dfc:graph:query`, `dfc:graph:status`, `dfc:graph:build --query` | implemented |
-| Graph (legacy JSON import) | same tables | `pnpm dfc:graph:import` (graphify graph.json) | same | implemented (fallback) |
-| Vectors (embeddings) | `embedding_model`, `embedding_chunk` | `pnpm dfc:embed` | folded into `/dfc-context` | scaffolding — **approval-gated**, off by default |
-| Memories (5 kinds) | `decision`, `evidence_item`, `lesson`, `snippet`, `repo_fact` | `pnpm dfc:remember`, `pnpm dfc:memory` | `pnpm dfc:memory search`, via `/dfc-context` | implemented |
-| Task / blocker state | `task`, `blocker` | `pnpm dfc:task`, `pnpm dfc:blocker` | same CLIs; open items appear in `/dfc-context` `state` | implemented |
-| Runs | `agent_run`, `tool_event` | `pnpm dfc:import-runs` | via `/dfc-context` | implemented |
+| Channel | Tables | Ingest | Query |
+| --- | --- | --- | --- |
+| Repo files (BM25) | `file` | `ingest` | via `context` |
+| Document chunks (BM25) | `document`, `doc_chunk` | `docs ingest` | `search` / `docs query` |
+| Graph (direct, Rust) | `graph_snapshot/node/edge/hyperedge` | `graph build` (external `graphify-surreal` → SurrealDB) | `query` / `graph query` / `graph status` |
+| Graph (JSON import fallback) | same tables | `graph import` (graph.json) | same |
+| Vectors (embeddings) | `embedding_model`, `embedding_chunk` | `embed` | folded into `context` |
+| Memories (6 kinds) | `decision`, `evidence_item`, `lesson`, `snippet`, `repo_fact`, `task_note` | `remember`, `memory` | `memory search`, via `context` |
+| Task / blocker state | `task`, `blocker` | `task`, `blocker` | same CLIs; open items appear in `context` |
+| Runs | `agent_run`, `tool_event` | run importers | via `context` |
 
-`pnpm dfc:context` fuses all available channels (files + symbols + graph neighborhood +
-document chunks + vector matches + decisions/evidence + recent runs) with deterministic
-scoring and a token budget; any unavailable channel degrades to an empty array.
+`context "<task>"` fuses all available channels (files + symbols + graph neighborhood + doc chunks + vector matches + memories + recent runs) with deterministic scoring and a token budget; any unavailable channel degrades to an empty section.
 
-Two utility commands round out the CLI:
+Utility commands: `metrics [--days 30] [--json]` (memory/run metrics) and `sync --to/--from <url>` (one-way copy of repo-scoped tables between the embedded database and a hosted instance; supports `--dry-run`).
 
-- `pnpm dfc:metrics [--days 30] [--json]` — summary of memory and run metrics.
-- `pnpm dfc:sync --to <url>` / `--from <url>` — one-way copy of the repo-scoped tables
-  between the embedded database and a hosted SurrealDB instance (supports `--dry-run`).
-  Use it to promote local memory to a shared hosted instance, or pull it back down.
+### Embeddings
 
-**Claude memory skills** (manual-invoke, bundled in the plugin under `skills/`): `/dfc-context`,
-`/dfc-remember`, `/dfc-memory`, `/dfc-search`, `/dfc-status`, `/dfc-ingest`, `/dfc-session-recap`,
-`/dfc-graph`.
+- **Local, keyless (default):** ONNX `all-MiniLM-L6-v2` via `@huggingface/transformers`, auto-downloaded and cached (~90 MB, one-time). Manage with `models status` / `models install`.
+- **OpenAI-compatible (optional):** `config embedding openai-compatible`, then `VOIDARCH_EMBED_BASE_URL`, `VOIDARCH_EMBED_MODEL`, `VOIDARCH_EMBED_API_KEY` (or `OPENAI_API_KEY`), optional `VOIDARCH_EMBED_DIMENSIONS`. **Paid calls are approval-gated** — they run only with `--approve` or `VOIDARCH_EMBED_APPROVED=1`. Paid APIs are never called silently.
 
-### Dev-memory status
+### Using it from Claude Code, Codex, and other agents
 
-**Implemented now (typecheck + dry-run validated):** document, graph, and vector
-**code paths**; hybrid context-pack retrieval; the Claude memory skills; migrations
-`schema/0003_documents_graph_vectors.surql` and `schema/0004_state_memory_kinds.surql`
-(task/blocker state + the lesson/snippet/repo_fact memory kinds).
+`voidarch-context snippets` prints both integrations ready to paste:
 
-**Dry-run only (no credentials needed):** `dfc:docs:ingest --dry-run`,
-`dfc:docs:query --dry-run`, `dfc:graph:status --dry-run`, `dfc:graph:query --dry-run`,
-`dfc:embed --dry-run`, `dfc:memory:doctor`, `dfc:memory:gc --dry-run`.
+- **Claude Code:** a slash command for `.claude/commands/voidarch-context.md` — `/voidarch-context <task>` builds and injects a context pack. This repo's bundled plugin also ships the equivalent memory skills (legacy `/dfc-*` names, see [Skills](#skills-skills)).
+- **Codex / AGENTS.md agents:** an `AGENTS.md` block instructing agents to run `npx voidarch-context context "<task>"` before non-trivial work and `remember --kind <k> "..."` to record durable facts.
 
-**Requires a database:** every live `ingest`/`import`/`query`/`status` path and
-`pnpm dfc:db:migrate`. The embedded SurrealKV default needs no credentials; hosted mode
-needs `.dfc/surreal.env` or `DFC_SURREAL_*`.
+If `--agent` is omitted, writes default to `manual`; supported source agents are `manual`, `codex`, `claude`.
 
-**Requires an explicit embedding provider** (`DFC_EMBED_PROVIDER=ollama|openai`): `dfc:embed`
-live. The paid path (`openai`) **also** needs `OPENAI_API_KEY` **and** approval
-(`DFC_EMBED_APPROVED=1` or `--approve`) — paid APIs are never called silently.
+### Target-repo mode & hosted backend
 
-**Live-validated (2026-06-30):** against the canonical hosted SurrealDB instance —
-`db:migrate` (incl. `schema/0003`), `ingest` (91 files), `docs:ingest` (40 docs / 239
-chunks), `graph:import` (663 nodes / 1122 edges), `context` (hybrid pack: files + symbols +
-graph + doc chunks), `status`, `memory:doctor`, `memory:gc`. See
-[`docs/postmerge-validation-and-roadmap.md`](docs/postmerge-validation-and-roadmap.md) §3b.
+The CLI can run from one install while targeting another repository. Target-root resolution order:
 
-**External target validation (2026-06-30):** installed plugin cache validated against
-`/opt/career-ops` with target `.dfc/*.env`, isolated database `repo_career_ops`,
-bounded file/doc writes, docs query, local graph dry-run, context pack, status,
-doctor, and GC dry-run. Full graph/doc/vector imports should be chunked or run on a
-larger SurrealDB instance; Free-tier instances can time out on full-repo loads.
+1. `--repo-root <path>`
+2. `DFC_TARGET_REPO_ROOT` (legacy env name)
+3. `CLAUDE_PROJECT_DIR`
+4. current working directory
 
-**Still pending:** interactive plugin-session test (`claude --plugin-dir .`, blocked here by
-the nested-session guard); efficiency benchmark before any token-savings claim.
+Config precedence: `process.env` > target repo `.dfc/*.env` (legacy) > `.voidarch/config.json`. Each repo keeps its own database identity (`DFC_REPO_ID`, `DFC_SURREAL_DB`), so one install serves many repos without cross-contamination.
 
-## Architecture
+**Hosted alternative** (shared multi-machine memory): point `DFC_SURREAL_URL`/`_USER`/`_PASS` at a hosted SurrealDB (`wss://`). Credentials belong in env vars or gitignored `.dfc/*.env` files — never commit them, never print `DFC_SURREAL_PASS`. Use `sync` to promote local memory to the hosted instance or pull it back down.
 
-```
-User / issue / PR / backlog item
-  → GitKraken Kepler        task, worktree, branch/session, diff, stage/commit/PR
-  → Claude Code supervisor  GSD routing, intent/architecture/risk, executor choice, approvals
-  → Context & planning      graphify repo graph · repo-explorer · Context7 · Firecrawl (gated)
-  → Execution               implementation-worker · test-debugger · Jules (async PR)
-  → Verification            tests/lint/typecheck/build/CI · pr-reviewer · security-reviewer
-  → Observability+approval  .agent-runs logs · session report · rollback · human approval
+---
+
+## Voidarch Studio — the control room
+
+### Web dashboard
+
+```bash
+pnpm dfc:dashboard --repo-root /path/to/repo     # http://127.0.0.1:4949 (or /dfc-dashboard in-session)
 ```
 
-Operating rule: **GSD controls phases · Karpathy rules constrain coding · Kepler/GitKraken
-controls Git state · graphify controls repo discovery · Claude supervises · subagents execute
-local · Jules executes async PRs · Context7 = docs · Firecrawl = gated web · hooks = safety ·
-observability = audit · the user approves irreversible actions.**
+Local-only (binds 127.0.0.1), zero extra dependencies. A single-page aurora-dark control room with collapsible panels: **Control Room** (live agents + needs-attention), **Agents** (deploy headless `claude -p` runs with streamed output and a kill button, plus hooked-session history), **Workflows**, **Code Map** (interactive force graph with search/focus), **Memory & Retrieval**, **Metrics**, **Token Usage** (real per-model/per-day/per-session tokens from Claude Code transcripts + context-pack estimates), **Sync & Backend** (embedded/hosted, LOCK state), **Observability**, and **Plugin Health** — plus a **Mercury-powered read-only assistant** drawer that answers repo/system questions from the graph, dev-memory, and live state.
 
-## What's in this plugin
+Everything degrades gracefully: no DB → memory panel reads "off"; no graph → prompt to build one; no transcripts → tokens panel reads "off"; no Mercury key → assistant explains how to configure it. Full guide: [`docs/studio-dashboard.md`](docs/studio-dashboard.md).
+
+### Native SwiftUI app
+
+```bash
+cd studio
+swift run VoidarchStudio     # macOS 14+, Apple Silicon primary
+```
+
+Hybrid shell ([`studio/README.md`](studio/README.md)): native SwiftUI owns orchestration (Tasks, Worktrees, Terminal via SwiftTerm PTY, Runs, Providers with launch profiles persisted to `~/.voidarch-studio/providers.json`), WKWebView panels reuse the daemon's dashboard pages until they go native. The daemon is the extended dashboard server above — start it first.
+
+### Feature flags
+
+Planned Studio modules are registered in [`src/flags.ts`](src/flags.ts) and printed by `pnpm dfc:flags`. Statuses stay truthful: nothing is presented as implemented until it is.
+
+---
+
+## The Claude Code plugin
+
+This repo doubles as a drop-in Claude Code plugin (`voidarch-studio` in [`.claude-plugin/plugin.json`](.claude-plugin/plugin.json)) for **subscription-first, token-efficient, higher-autonomy, higher-accuracy** autonomous development. It turns Claude Code into a development *supervisor*: Claude reasons and routes while specialized tools handle Git state, repo indexing, current docs, web extraction, verification, security checks, async branch work, and workflow visibility.
+
+### Goals
+
+1. **Lower token usage** — skills stay available but unloaded until needed; noisy repo exploration moves to subagents; a repo graph precedes raw file reads; Git plumbing is offloaded to GitKraken/Kepler; GitHub MCP stays read-only; docs/web stay gated.
+2. **Higher safe autonomy** — GSD drives the phase loop; scoped subagents and Jules execute; hooks enforce deterministic safety; runs and approvals are logged.
+3. **Higher accuracy** — repo-graph lookup before broad reads; Context7 for version-sensitive docs; deterministic tests/lint/typecheck/build/CI/security; PR + security review before Ship.
+4. **Subscription-first** — paid/gateway routes require explicit user approval.
 
 ### Skills (`skills/`)
 
 | Skill | Auto-invocable | Purpose |
 |---|---|---|
 | `dev-flow-routing` | yes | Maps each GSD phase → skills/agents/tools/gates. The routing spine. |
-| `graph-context-scan` | yes | Query the repo graph (graphify) before broad file reads. |
+| `graph-context-scan` | yes | Query the repo graph before broad file reads. |
 | `observability-report` | yes | Summarize run/session state from `.agent-runs/`. |
 | `approval-request` | yes | Standard human approval request before irreversible actions. |
 | `kepler-task-brief` | **manual** | Convert a request/issue/Plan into a Kepler-ready task brief. |
 | `jules-handoff` | **manual** | Convert a Plan into a bounded, approval-gated Jules task packet. |
 | `firecrawl-research` | **manual** | Bounded external web extraction; crawl/extract gated. |
-| `dfc-dashboard` | **manual** | Start the per-repo web dashboard (health, sessions, memory, graph). |
-| `dfc-init` | **manual** | Scaffold the current repo (.dfc templates, .gitignore, CLAUDE/AGENTS.md). |
-| `dfc-context` / `dfc-remember` / `dfc-search` / `dfc-status` / `dfc-ingest` / `dfc-graph` / `dfc-session-recap` / `dfc-grok-build` | **manual** | SurrealDB dev-memory + external-worker skills (see below). |
+| `dfc-dashboard` | **manual** | Start the Voidarch Studio dashboard. |
+| `dfc-init` | **manual** | Scaffold the current repo (templates, .gitignore, CLAUDE/AGENTS.md). |
+| `dfc-context` / `dfc-remember` / `dfc-search` / `dfc-status` / `dfc-ingest` / `dfc-graph` / `dfc-session-recap` / `dfc-grok-build` | **manual** | Voidarch Context memory + external-worker skills (legacy `/dfc-*` names). |
 
-"Auto-invocable" maps to the `disable-model-invocation` frontmatter field (`false` = the model
-may auto-select it; `true` = manual/user-invoked only).
+"Auto-invocable" maps to the `disable-model-invocation` frontmatter field (`false` = the model may auto-select it; `true` = manual/user-invoked only).
 
 ### Agents (`agents/`)
 
-Nine scoped subagents, least-privilege tools (read-only agents have **no** Edit/Write/Bash):
+Ten scoped subagents, least-privilege tools (read-only agents have **no** Edit/Write/Bash):
 
 | Agent | Phase | Writes? | Role |
 |---|---|---|---|
@@ -271,172 +241,114 @@ Nine scoped subagents, least-privilege tools (read-only agents have **no** Edit/
 | `security-reviewer` | Verify | no | Auth/secrets/permissions/injection; severity-ranked. |
 | `docs-researcher` | Plan/Execute | no | Current version-correct docs (Context7/gated Firecrawl). |
 | `release-checker` | Ship | no | Ship readiness: verification, CI, approvals, rollback. |
+| `grok-build-worker` | Execute | yes | Manual external build worker (`pnpm dfc:grok-build`). |
 
 See [`templates/docs/agent-flow.md`](templates/docs/agent-flow.md) for tool sets and composition.
 
 ### Hooks (`hooks/hooks.json` + scripts)
 
-A shared helper `hooks/dfc-common.sh` (sourced, not a hook) provides fail-closed parsing, scoped
-approvals, and session-scoped markers.
+A shared helper `hooks/dfc-common.sh` (sourced, not a hook) provides fail-closed parsing, scoped approvals, and session-scoped markers.
 
 | Hook | Event | Behavior |
 |---|---|---|
 | `block-protected-files` | PreToolUse `Write\|Edit` | Blocks `.env`, keys/certs, credentials, prod config, `.git/*`, lockfiles. **Fails closed** on bad payloads. |
 | `block-dangerous-shell` | PreToolUse `Bash` | Blocks `rm -rf`, `git reset --hard`, **force push AND `--force-with-lease`**, `curl\|sh`, deploy/publish, DB drops, write-like `gk` CLI ops. **Fails closed.** |
-| `mcp-write-gate` | PreToolUse `mcp__.*` | Blocks GitHub writes, Firecrawl crawl/extract/agent, Jules/Copilot control, **and write-like GitKraken MCP actions** (case-insensitive). **Fails closed.** |
-| `enforce-repo-graph-first` | PreToolUse `Read\|Grep\|Glob` | **Warns once per session** after N raw reads with no graph scan. Never blocks. Session-scoped markers. |
-| `require-verification-before-ship` | Stop | Warns (or blocks under `.strict-verify`) if files changed with no **session-scoped** verification recorded. |
-| `log-agent-run` | PostToolUse `*` | Appends a rich JSON line per tool call to `.agent-runs/sessions/<id>/tools.jsonl` (+ aggregate). Never blocks. |
+| `mcp-write-gate` | PreToolUse `mcp__.*` | Blocks GitHub writes, Firecrawl crawl/extract/agent, Jules/Copilot control, write-like GitKraken MCP actions. **Fails closed.** |
+| `enforce-repo-graph-first` | PreToolUse `Read\|Grep\|Glob` | Warns once per session after N raw reads with no graph scan. Never blocks. |
+| `require-verification-before-ship` | Stop | Warns (or blocks under `.strict-verify`) if files changed with no session-scoped verification recorded. |
+| `log-agent-run` | PostToolUse `*` | Appends a rich JSON line per tool call to `.agent-runs/sessions/<id>/tools.jsonl`. Never blocks. |
 | `log-compact-recap` | PreCompact | Logs compaction and prompts a recap before context is compacted. |
 
-**Fail-closed:** the three security hooks exit 2 (block) on empty/malformed payloads or when `jq`
-is unavailable (`jq` is required for safe parsing; `DFC_ALLOW_NO_JQ=1` opts out, unsafely). Pure
-logging hooks never block — they record a parse error instead.
+**Fail-closed:** the three security hooks exit 2 (block) on empty/malformed payloads or when `jq` is unavailable (`DFC_ALLOW_NO_JQ=1` opts out, unsafely). Pure logging hooks never block.
 
-**Approvals = scoped records, not broad flags.** Overrides are now **scoped approval records** —
-JSON files under `.agent-runs/approvals/` (or `.agent-runs/sessions/<id>/approvals/`) whose
-`tool_pattern` matches the specific tool/command, with expiry and `single_use` consumption. See
-[`templates/approval.example.json`](templates/approval.example.json) and
-[`approval-gates.md`](templates/docs/approval-gates.md). Hard blocks with no override: `.git/*` and
-private key material.
+**Approvals = scoped records, not broad flags.** Overrides are JSON files under `.agent-runs/approvals/` whose `tool_pattern` matches the specific tool/command, with expiry and `single_use` consumption. See [`templates/approval.example.json`](templates/approval.example.json) and [`approval-gates.md`](templates/docs/approval-gates.md). Hard blocks with no override: `.git/*` and private key material. The old broad flags (`.allow-mcp-writes` etc.) are **deprecated and unsafe** — honored only with `DFC_ALLOW_LEGACY_FLAGS=1`.
 
-> The old broad flags (`.allow-mcp-writes`, `.allow-destructive-shell`, `.allow-protected-edits`,
-> `.allow-dependency-changes`) are **deprecated and unsafe** — honored only when
-> `DFC_ALLOW_LEGACY_FLAGS=1`, with a deprecation warning. Migrate to scoped approval records.
-
-Tunables: `DFC_GRAPH_READ_THRESHOLD` (default `4`); `GRAPH_INDEX_TOOL` / `GRAPH_INDEX_COMMAND` /
-`GRAPH_INDEX_OUTPUT_DIR` / `GRAPH_INDEX_FRESHNESS_MINUTES` (graph integration, may be unavailable —
-see [`graph-index-flow.md`](templates/docs/graph-index-flow.md)); `.strict-verify` makes the
-verification gate block.
+Tunables: `DFC_GRAPH_READ_THRESHOLD` (default `4`); `GRAPH_INDEX_TOOL` / `GRAPH_INDEX_COMMAND` / `GRAPH_INDEX_OUTPUT_DIR` / `GRAPH_INDEX_FRESHNESS_MINUTES`; `.strict-verify` makes the verification gate block.
 
 ### MCP (`.mcp.json`)
 
-Ships **one** server: GitHub, **read-only** (`X-MCP-Readonly: true`, scoped toolsets), authed
-via the `GITHUB_MCP_PAT` environment variable. Set it before enabling:
+Ships **one** server: GitHub, **read-only** (`X-MCP-Readonly: true`, scoped toolsets), authed via `GITHUB_MCP_PAT`. If unset, the server simply won't connect (non-fatal). GitKraken, Context7, Firecrawl, and `agent-cli` (Jules/Copilot) servers are expected from your host environment and are **not** redefined here.
 
-```bash
-export GITHUB_MCP_PAT=ghp_your_read_only_token
-```
-
-If `GITHUB_MCP_PAT` is unset the server simply won't connect (non-fatal). GitKraken, Context7,
-Firecrawl, and the `agent-cli` (Jules/Copilot) servers are expected from your host
-environment and are **not** redefined here, to avoid duplicate-server conflicts. `dev-flow-routing`
-references them by their real tool names with generic fallbacks.
-
-**Optional MCP examples** live in [`templates/mcp.examples/`](templates/mcp.examples/) — copyable,
-**not active by default**: `github.readonly.json`, `gitkraken.optional.json`,
-`context7.cli-skill-notes.md`, `context7.mcp.optional.json`, `firecrawl.gated.optional.json`,
-`graphify.optional.json` (an explicit placeholder — no invented command), and `jules.notes.md`.
-Each documents its approval requirements; enabling any of them is opt-in.
+**Optional MCP examples** live in [`templates/mcp.examples/`](templates/mcp.examples/) — copyable, not active by default; each documents its approval requirements.
 
 ### Templates & docs (`templates/`)
 
-- `CLAUDE.md.template`, `AGENTS.md.template` — copy into your project to encode the workflow and
-  the rules external executors (Jules) must follow.
-- `templates/docs/` — nine flow docs: `agent-flow`, `gsd-skill-routing`, `kepler-flow`,
-  `jules-flow`, `graph-index-flow`, `observability`, `approval-gates`, `efficiency-benchmark`,
-  `research-gaps`.
-- `templates/approval.example.json` — the scoped approval-record shape (copy into `.agent-runs/approvals/`).
-- `templates/mcp.examples/` — copyable, opt-in MCP server snippets (see [MCP](#mcp-mcpjson)).
+- `CLAUDE.md.template`, `AGENTS.md.template` — copy into your project to encode the workflow and the rules external executors must follow.
+- `templates/docs/` — nine flow docs: `agent-flow`, `gsd-skill-routing`, `kepler-flow`, `jules-flow`, `graph-index-flow`, `observability`, `approval-gates`, `efficiency-benchmark`, `research-gaps`.
+- `templates/approval.example.json` — the scoped approval-record shape.
 
-## Voidarch Studio dashboard (per-repo agent control room)
-
-```bash
-pnpm dfc:dashboard --repo-root /path/to/repo     # http://127.0.0.1:4949 (or /dfc-dashboard in-session)
-```
-
-Local-only (binds 127.0.0.1), no extra dependencies. Single-page aurora-dark control
-room with collapsible panels: **Control Room** (live agents + needs-attention),
-**Agents** (deploy headless `claude -p` runs with streamed output and a kill button,
-plus hooked-session history), **Workflows**, **Code Map** (interactive in-dashboard
-force graph with search/focus), **Memory & Retrieval**, **Metrics**, **Token Usage**
-(real per-model/per-day/per-session tokens from Claude Code transcripts + context-pack
-estimates), **Sync & Backend** (embedded/hosted, LOCK state), **Observability**, and
-**Plugin Health** — plus a **Mercury-powered read-only assistant** drawer that answers
-repo/system questions from the graph, dev-memory, and live state
-(`.dfc/mercury.env`, see below).
-
-Everything degrades gracefully: no SurrealDB creds → memory panel reads "off"; no graph →
-prompt to run `/graphify`; no transcripts → tokens panel reads "off"; no Mercury key →
-assistant explains how to configure it. Full guide: [`docs/studio-dashboard.md`](docs/studio-dashboard.md).
-
-## Installation — drop into any repo
+### Installation — drop into any repo
 
 ```bash
 # 1. One-time: install plugin deps
-cd /path/to/dev-flow-control && pnpm install
+cd /path/to/voidarch && pnpm install
 
-# 2. Scaffold the target repo (.dfc templates with per-repo DB identity, .gitignore,
-#    and the bundled multi-agent workflows dfc-review / dfc-understand / dfc-preship
-#    into .claude/workflows/)
-pnpm dfc:init --repo-root /path/to/your-repo            # add --copy-credentials to reuse
-                                                        # the plugin's SurrealDB instance
-                                                        # with an isolated per-repo database
+# 2. Scaffold the target repo (per-repo DB identity, .gitignore, bundled workflows)
+pnpm dfc:init --repo-root /path/to/your-repo    # --copy-credentials reuses a hosted instance
+                                                # with an isolated per-repo database
 
 # 3. Load the plugin when working in that repo
-cd /path/to/your-repo && claude --plugin-dir /path/to/dev-flow-control
+cd /path/to/your-repo && claude --plugin-dir /path/to/voidarch
 
 # 4. Inside the session: /dfc-init (if you skipped step 2), /dfc-context, /dfc-dashboard …
 ```
 
-Hooks load at session start — restart Claude Code after enabling. Use `claude --debug` to see
-hook execution and `/hooks` to review loaded hooks. Full checklist:
-[`docs/adding-to-new-repo.md`](docs/adding-to-new-repo.md).
+Hooks load at session start — restart Claude Code after enabling. Use `claude --debug` to see hook execution. Full checklist: [`docs/adding-to-new-repo.md`](docs/adding-to-new-repo.md).
 
-## Skill visibility strategy
+For the *Anthropic/GSD* skills the workflow routes to, apply `skillOverrides` in **your own** `.claude/settings.json` (a plugin cannot apply these for you) — see [`docs/adding-to-new-repo.md`](docs/adding-to-new-repo.md).
 
-The plugin's own skills set their visibility via `disable-model-invocation` (above). For the
-*Anthropic/GSD* skills the workflow routes to, apply overrides in **your own**
-`.claude/settings.json` (a plugin cannot apply these to your session for you):
+### Safety & approval gates
 
-```json
-{
-  "skillOverrides": {
-    "product-management": "on",
-    "engineering": "on",
-    "pr-review-toolkit": "on",
-    "session-report": "on",
-    "design": "name-only",
-    "frontend-design": "name-only",
-    "data": "user-invocable-only",
-    "mcp-server-dev": "user-invocable-only",
-    "plugin-dev": "user-invocable-only",
-    "hookify": "user-invocable-only"
-  }
-}
+Never done without explicit approval: deploy to production · merge PRs · push protected branches · write production data · access/expose secrets · send messages · submit forms/applications · purchases · public posts · change billing/model/provider routes · change security settings · destructive shell · enable paid Firecrawl/API modes · start Jules API sessions. The `approval-request` skill presents action, risk, diff/payload preview, and rollback before proceeding; the hooks above enforce it deterministically.
+
+## Architecture
+
+```
+User / issue / PR / backlog item
+  → GitKraken Kepler        task, worktree, branch/session, diff, stage/commit/PR
+  → Claude Code supervisor  GSD routing, intent/architecture/risk, executor choice, approvals
+  → Context & planning      Voidarch Context (graph/memory/context packs) · repo-explorer · Context7 · Firecrawl (gated)
+  → Execution               implementation-worker · test-debugger · Jules (async PR)
+  → Verification            tests/lint/typecheck/build/CI · pr-reviewer · security-reviewer
+  → Observability+approval  .agent-runs logs · Studio dashboard · rollback · human approval
 ```
 
-## Safety & approval gates
+Operating rule: **GSD controls phases · Karpathy rules constrain coding · Kepler/GitKraken controls Git state · the repo graph controls discovery · Claude supervises · subagents execute local · Jules executes async PRs · Context7 = docs · Firecrawl = gated web · hooks = safety · observability = audit · the user approves irreversible actions.**
 
-Never done without explicit approval: deploy to production · merge PRs · push protected
-branches · write production data · access/expose secrets · send messages · submit
-forms/applications · purchases · public posts · change billing/model/provider routes · change
-security settings · destructive shell · enable paid Firecrawl/API modes · start Jules API
-sessions. Use the `approval-request` skill to present action, risk, diff/payload preview, and
-rollback before proceeding. Deterministic enforcement is provided by the hooks above.
+## Development
 
-## Notes on plugin schema (intentional deviations from the original spec)
+```bash
+pnpm install                     # workspace: root + packages/voidarch-context
+npx tsc --noEmit                 # typecheck everything
+bash scripts/dfc-validate-hooks.sh   # hook harness (39 checks)
+claude plugin validate .         # plugin manifest
+cd packages/voidarch-context && npm pack --dry-run   # package contents
+cd studio && swift build         # native app (macOS 14+, Xcode 26.6 verified)
+```
 
-- **No `monitors/` component.** Claude Code has no `monitors` plugin component. Observability is
-  delivered via the logging hooks (`.agent-runs/current.jsonl`), the `observability-report`
-  skill, and optional OpenTelemetry (env/settings based) — wired through real mechanisms.
-- **No `components` map / plugin `settings.json` auto-apply.** The manifest uses the real schema
-  (`name`, `version`, `description`, `author`, `keywords`). `skillOverrides` go in your own
-  settings (shown above), not a plugin-root file.
+The `pnpm dfc:*` root scripts are thin aliases into `packages/voidarch-context/scripts/` and `scripts/`; the hook and skill layers call them, so they stay stable. Smoke-test the packed CLI end-to-end by installing the tarball into a scratch repo and running `init → ingest → search → context → remember → status → doctor → serve`.
+
+Historical specs (pre-rename naming, kept as history): [`docs/mvp/`](docs/mvp/), [`docs/dev-flow-control-spec.md`](docs/dev-flow-control-spec.md), [`docs/spec-delta-surrealdb.md`](docs/spec-delta-surrealdb.md), [`docs/postmerge-validation-and-roadmap.md`](docs/postmerge-validation-and-roadmap.md).
+
+## Legacy naming & compatibility
+
+This project was built as **dev-flow-control** (`dfc`), then split as **Nox / Nox Studio**, and is now **Voidarch Context / Voidarch Studio**. Compatibility is deliberate and minimal:
+
+| Legacy | Status |
+|---|---|
+| `.nox/config.json`, `.dfc/dev-memory/`, `.noxignore` | read as fallbacks; new writes go to `.voidarch/` and `.voidarchignore` |
+| `NOX_EMBED_*` env vars | deprecated aliases for `VOIDARCH_EMBED_*` |
+| `DFC_*` env vars | legacy internal config keys; still canonical in code, win over aliases |
+| `pnpm dfc:*` scripts, `dfc-*.ts` filenames | legacy internal aliases/filenames; hooks/skills depend on them |
+| `/dfc-*` skill names | kept for muscle memory; may be renamed in a later major |
+| `nox` bin, `dfc:` CLI prefix | removed — use `voidarch-context`; `page` is a deprecated alias of `serve` |
+| `graphify-surreal` | not a remnant — the real name of the external, optional Rust graph producer |
 
 ## Roadmap
 
-All spec components are built. Remaining work is validation-in-the-wild, not authoring:
-
-- **Live session test.** Install with `--plugin-dir`, restart, and confirm skills auto-trigger,
-  hooks fire (`claude --debug`), agents dispatch, and the GitHub MCP server connects with a PAT.
-- **Cross-repo validation.** Exercise `--repo-root` against multiple real repos and keep each
-  repo on its own `DFC_SURREAL_DB`.
-- **Run the efficiency benchmark.** Execute `templates/docs/efficiency-benchmark.md` Tasks A/B/C
-  (baseline vs plugin) and record real token/accuracy deltas before claiming improvement.
-- **Close the research gaps.** Work through `templates/docs/research-gaps.md` (GitKraken/Kepler
-  plan capabilities, Jules quota/auth, graphify language/output specifics, telemetry env-vars).
-- **Publish.** Add a marketplace entry once live-tested.
+- **Voidarch Context:** Tree-sitter-native graph building in the npm path (no external producer), auto-embed on ingest + hybrid ranking, first-class Claude Code plugin package, memory sync/export between machines.
+- **Voidarch Studio:** module framework + subscription-first provider routing (tracked in issues), deeper native panels in the SwiftUI shell, context packs attached to agent runs, future MLX-powered local assistance.
+- **Validation:** live plugin-session testing across repos, and the efficiency benchmark (`templates/docs/efficiency-benchmark.md`) before any token-savings claim.
 
 ## License
 
