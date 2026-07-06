@@ -193,7 +193,7 @@ corrected to `wss://host`; once fixed, the host resolved and `/health` returned 
 
 ## 6. Lessons from the Nox dashboard round (2026-07-05)
 
-- The dashboard is now the **Nox Studio** single-page control room (`docs/nox-dashboard.md`), frontend split out to `dashboard/` (plain HTML/CSS/JS), server still `scripts/dfc-dashboard.ts`.
+- The dashboard is now the **Nox Studio** single-page control room (`docs/studio-dashboard.md`), frontend split out to `dashboard/` (plain HTML/CSS/JS), server still `scripts/dfc-dashboard.ts`.
 - `[hidden]` loses to any CSS `display:` rule on the same element — pair custom-displayed elements with an explicit `[hidden] { display: none; }`.
 - `--repo-root` with a **relative** path resolves against the process cwd; `pnpm --dir` changes that cwd, so launcher configs must pass absolute paths.
 - Spawning `claude -p` from a server that was itself started inside a Claude session works once `CLAUDECODE`/`CLAUDE_CODE_*` are stripped from the child env (the nested-session guard is env-based). Verified live: plan-mode run returned its result through stream-json.

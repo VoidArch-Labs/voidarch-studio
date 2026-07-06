@@ -22,9 +22,9 @@ import { randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { normalizeSourceAgent } from "nox-memory/agents";
-import { clean } from "nox-memory/runs";
-import { parseEnvFile, REPO_ROOT } from "nox-memory/surreal";
+import { normalizeSourceAgent } from "@voidarch/context/agents";
+import { clean } from "@voidarch/context/runs";
+import { parseEnvFile, REPO_ROOT } from "@voidarch/context/surreal";
 
 const MODES = ["review", "implement", "diff-review"] as const;
 type Mode = (typeof MODES)[number];

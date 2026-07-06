@@ -1,24 +1,26 @@
-# dev-flow-control — Nox & Nox Studio
+# Voidarch Studio — agent orchestration control room (+ home of Voidarch Context)
 
-Two products in one repo (see [`docs/mvp/nox-and-nox-studio-mvp.md`](docs/mvp/nox-and-nox-studio-mvp.md)
-for the canonical MVP spec and boundary):
+Two products, one repo (formerly **dev-flow-control / Nox**; `dfc` survives only as a legacy
+internal command prefix):
 
-- **Nox** — a lightweight plug-and-play repo **memory and query engine** (the `pnpm dfc:*`
-  CLI + embedded SurrealDB): if it retrieves, remembers, indexes, searches, or explains
-  repo context, it's Nox.
-- **Nox Studio** — a heavyweight power-user **agent orchestration control room**
-  (`pnpm dfc:dashboard`): if it launches, routes, controls, observes, approves, or manages
+- **[Voidarch Context](packages/voidarch-context/README.md)** (`@voidarch/context`, in
+  [`packages/voidarch-context/`](packages/voidarch-context/)) — a standalone, drop-in local
+  repo **memory / query / context-pack engine** for AI coding agents: if it retrieves,
+  remembers, indexes, searches, or explains repo context, it's Context. Installable via npm,
+  no Docker/Python/API key. See its README for install, quickstart, and the
+  `voidarch-context` CLI.
+- **Voidarch Studio** (this repo) — a power-user **agent orchestration control room**:
+  worktrees, terminal/PTY, agent launching, prompt/provider routing, hooks, observability,
+  the per-repo web dashboard (`pnpm dfc:dashboard`), and the native SwiftUI shell
+  ([`studio/`](studio/)). If it launches, routes, controls, observes, approves, or manages
   agents, it's Studio. Planned Studio modules are feature-flagged (`pnpm dfc:flags`) and
   never presented as implemented until they are.
 
-The repo is a TypeScript/npm package; the only Rust component is the **external, optional**
-`graphify-surreal` graph producer used by `pnpm dfc:graph:build`.
-
-Historically this is a Claude Code plugin pack for **subscription-first, token-efficient,
-higher-autonomy, higher-accuracy** autonomous development. It turns Claude Code into a development
-*supervisor* instead of a terminal janitor: Claude reasons and routes, while specialized
-tools handle Git state, repo indexing, current docs, web extraction, verification, security
-checks, async branch work, and workflow visibility.
+Historically this repo is a Claude Code plugin pack for **subscription-first,
+token-efficient, higher-autonomy, higher-accuracy** autonomous development. It turns Claude
+Code into a development *supervisor* instead of a terminal janitor: Claude reasons and
+routes, while specialized tools handle Git state, repo indexing, current docs, web
+extraction, verification, security checks, async branch work, and workflow visibility.
 
 > Context windows are not landfill. This plugin makes a large tool ecosystem *available*
 > without loading all of it into every session.
@@ -39,30 +41,32 @@ checks, async branch work, and workflow visibility.
 ## Status
 
 **v0.4.0 — drop-in development-control plugin.** Ships the manifest, 17 skills (7 workflow +
-10 `/dfc-*` dev-memory/dashboard/setup), 10 agents, 7 fail-closed hooks, a **per-repo web
-dashboard** (`pnpm dfc:dashboard`), a one-shot target-repo scaffold (`pnpm dfc:init`), the
-read-only GitHub MCP config, `CLAUDE.md`/`AGENTS.md` templates, 9 flow docs, and optional MCP
-examples. Manifest validation (`claude plugin validate`), typecheck, hook harness, and
-dashboard/init smoke tests pass; see the roadmap for what is still only partially
-live-validated.
+10 `/dfc-*` dev-memory/dashboard/setup — legacy names kept for compatibility), 10 agents,
+7 fail-closed hooks, a **per-repo web dashboard** (`pnpm dfc:dashboard`), a one-shot
+target-repo scaffold (`pnpm dfc:init`), the read-only GitHub MCP config,
+`CLAUDE.md`/`AGENTS.md` templates, 9 flow docs, and optional MCP examples. Manifest
+validation (`claude plugin validate`), typecheck, hook harness, and dashboard/init smoke
+tests pass; see the roadmap for what is still only partially live-validated.
 
-## Shared dev-memory (agent-neutral SurrealDB `dfc` CLI)
+## Shared dev-memory (Voidarch Context)
 
-`dev-flow-control` remains the canonical **Claude Code plugin** repo. Alongside the plugin it
-ships a shared, **agent-neutral** dev-memory CLI (`pnpm dfc:*`) backed by **SurrealDB** —
-embedded SurrealKV inside the repo by default (zero config), or a hosted instance for
-shared multi-machine memory. One per-repo dev-memory database that every agent reads and writes:
+The memory/query engine lives in **`@voidarch/context`**
+([`packages/voidarch-context/`](packages/voidarch-context/README.md)) — an agent-neutral
+CLI (`voidarch-context`) backed by **SurrealDB**: embedded SurrealKV inside the repo by
+default (zero config), or a hosted instance for shared multi-machine memory. One per-repo
+dev-memory database that every agent reads and writes:
 
 - **Claude Code** compatibility is supported through
   [`skills/dfc-context/SKILL.md`](skills/dfc-context/SKILL.md) (the `/dfc-context`
-  skill) and the plugin docs.
-- **Codex and future agents** use the same CLI, wired through [`AGENTS.md`](AGENTS.md) and the
-  `pnpm dfc:*` scripts.
-- The dev-memory layer is **agent-neutral**: nothing about the Claude plugin depends on Codex; the
-  CLI is the common interface and SurrealDB is the single shared backend.
+  skill — legacy name) and `voidarch-context snippets`.
+- **Codex and future agents** use the same CLI, wired through [`AGENTS.md`](AGENTS.md).
+- The dev-memory layer is **agent-neutral**: nothing about the Claude plugin depends on
+  Codex; the CLI is the common interface and SurrealDB is the single shared backend.
+- The `pnpm dfc:*` scripts in this repo are **legacy internal aliases** that call the same
+  package scripts; new usage should prefer the `voidarch-context` CLI.
 
-Architecture and rationale: [`docs/dev-flow-control-spec.md`](docs/dev-flow-control-spec.md),
-[`docs/spec-delta-surrealdb.md`](docs/spec-delta-surrealdb.md), and
+Architecture and rationale: [`docs/dev-flow-control-spec.md`](docs/dev-flow-control-spec.md)
+(historical spec, pre-rename naming), [`docs/spec-delta-surrealdb.md`](docs/spec-delta-surrealdb.md), and
 [`docs/dev-memory-surreal-first-round.md`](docs/dev-memory-surreal-first-round.md).
 
 ### Quickstart (zero config — embedded SurrealKV)
@@ -335,7 +339,7 @@ Each documents its approval requirements; enabling any of them is opt-in.
 - `templates/approval.example.json` — the scoped approval-record shape (copy into `.agent-runs/approvals/`).
 - `templates/mcp.examples/` — copyable, opt-in MCP server snippets (see [MCP](#mcp-mcpjson)).
 
-## Nox dashboard (per-repo agent control room)
+## Voidarch Studio dashboard (per-repo agent control room)
 
 ```bash
 pnpm dfc:dashboard --repo-root /path/to/repo     # http://127.0.0.1:4949 (or /dfc-dashboard in-session)
@@ -354,7 +358,7 @@ repo/system questions from the graph, dev-memory, and live state
 
 Everything degrades gracefully: no SurrealDB creds → memory panel reads "off"; no graph →
 prompt to run `/graphify`; no transcripts → tokens panel reads "off"; no Mercury key →
-assistant explains how to configure it. Full guide: [`docs/nox-dashboard.md`](docs/nox-dashboard.md).
+assistant explains how to configure it. Full guide: [`docs/studio-dashboard.md`](docs/studio-dashboard.md).
 
 ## Installation — drop into any repo
 

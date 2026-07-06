@@ -8,9 +8,9 @@ importers:
 
   .:
     dependencies:
-      nox-memory:
+      '@voidarch/context':
         specifier: workspace:*
-        version: link:packages/nox-memory
+        version: link:packages/voidarch-context
       surrealdb:
         specifier: ^2.0.4
         version: 2.0.4(tslib@2.8.1)(typescript@5.9.3)
@@ -25,7 +25,7 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
-  packages/nox-memory:
+  packages/voidarch-context:
     dependencies:
       '@huggingface/transformers':
         specifier: ^4.2.0

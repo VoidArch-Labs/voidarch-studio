@@ -1,4 +1,4 @@
-// Feature-flag registry for the Nox / Nox Studio split.
+// Feature-flag registry for the Voidarch Context / Voidarch Studio split.
 // The status field is the truth claim — never mark a flag past what actually works.
 // Spec: docs/mvp/nox-and-nox-studio-mvp.md
 
@@ -14,7 +14,7 @@ export interface FeatureFlag {
 }
 
 export const FLAGS: FeatureFlag[] = [
-  // ---- Nox (memory engine) -----------------------------------------------------------
+  // ---- Voidarch Context (memory engine) -----------------------------------------------------------
   {
     id: "memory.localEmbeddings",
     owner: "memory",
@@ -55,7 +55,7 @@ export const FLAGS: FeatureFlag[] = [
     requiresApproval: false,
     description: "Retrieval-facing lifecycle hints and stale/superseded score penalty seed; review/merge/promote flows remain future work (issue #12).",
   },
-  // ---- Nox Studio (agent orchestration) ----------------------------------------------
+  // ---- Voidarch Studio (agent orchestration) ----------------------------------------------
   {
     id: "studio.worktrees",
     owner: "studio",

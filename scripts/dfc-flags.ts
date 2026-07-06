@@ -1,4 +1,4 @@
-// Print the Nox / Nox Studio feature-flag registry.
+// Print the Voidarch Context / Voidarch Studio feature-flag registry.
 //   pnpm dfc:flags [--json] [--owner memory|studio]
 import { FLAGS } from "../src/flags.js";
 

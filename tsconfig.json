@@ -13,5 +13,5 @@
     "noEmit": true,
     "types": ["node"]
   },
-  "include": ["src/**/*.ts", "scripts/**/*.ts", "packages/nox-memory/src/**/*.ts", "packages/nox-memory/scripts/**/*.ts"]
+  "include": ["src/**/*.ts", "scripts/**/*.ts", "packages/voidarch-context/src/**/*.ts", "packages/voidarch-context/scripts/**/*.ts"]
 }

@@ -1,5 +1,5 @@
 ---
-description: Start the Nox dashboard (per-repo agent control room — agents, workflows, code map, memory, metrics, tokens, Mercury assistant). Use only when explicitly invoked.
+description: Start the Voidarch Studio dashboard (per-repo agent control room — agents, workflows, code map, memory, metrics, tokens, Mercury assistant). Use only when explicitly invoked.
 disable-model-invocation: true
 allowed-tools: Bash
 ---
@@ -10,7 +10,7 @@ Start the dashboard server for the active project in the background:
 
 Then:
 - report the URL it printed (default `http://127.0.0.1:4949`; override with `--port <n>`)
-- tell the user it is the Nox control room: Control Room (live agents + needs-attention),
+- tell the user it is the Voidarch Studio control room: Control Room (live agents + needs-attention),
   Agents (deploy headless `claude -p` runs, session history), Workflows, Code Map
   (interactive graph), Memory, Metrics, Token Usage, Sync, Observability, Health, and the
   Mercury assistant drawer (needs `MERCURY_API_KEY` in `.dfc/mercury.env`)
