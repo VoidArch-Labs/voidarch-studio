@@ -131,7 +131,7 @@ SurrealDB is the **single** shared backend. Each channel is a *retrieval* lane f
 | --- | --- | --- | --- |
 | Repo files (BM25) | `file` | `ingest` | via `context` |
 | Document chunks (BM25) | `document`, `doc_chunk` | `docs ingest` | `search` / `docs query` |
-| Graph (built-in, native TS) | `graph_snapshot/node/edge/hyperedge` | `graph build` (files + symbols + import edges, no external tools) | `query` / `graph query` / `graph status` |
+| Graph (built-in, Tree-sitter) | `graph_snapshot/node/edge/hyperedge` | `graph build` (WASM Tree-sitter: files + symbols + import edges; regex fallback) | `query` / `graph query` / `graph status` |
 | Graph (deep, Rust — optional) | same tables | `graph build --engine graphify-surreal` (external binary, AST/semantic) | same |
 | Graph (JSON import fallback) | same tables | `graph import` (graph.json) | same |
 | Vectors (embeddings) | `embedding_model`, `embedding_chunk` | `embed` | folded into `context` |
@@ -347,7 +347,7 @@ This project was built as **dev-flow-control** (`dfc`), then split as **Nox / No
 
 ## Roadmap
 
-- **Voidarch Context:** Tree-sitter upgrade for the built-in graph builder (today: regex-level TS/JS/Python), auto-embed on ingest + hybrid ranking, first-class Claude Code plugin package, memory sync/export between machines.
+- **Voidarch Context:** more Tree-sitter grammars + call-graph edges in the built-in graph builder (today: TS/TSX/JS/Python), auto-embed on ingest + hybrid ranking, first-class Claude Code plugin package, memory sync/export between machines.
 - **Voidarch Studio:** module framework + subscription-first provider routing (tracked in issues), deeper native panels in the SwiftUI shell, context packs attached to agent runs, future MLX-powered local assistance.
 - **Validation:** live plugin-session testing across repos, and the efficiency benchmark (`templates/docs/efficiency-benchmark.md`) before any token-savings claim.
 
