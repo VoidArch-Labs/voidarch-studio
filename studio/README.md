@@ -1,13 +1,13 @@
-# Nox Studio — hybrid SwiftUI shell (scaffold)
+# Voidarch Studio — hybrid SwiftUI shell (scaffold)
 
 Spec: [`docs/mvp/nox-memory-and-studio-mvp-v2.md`](../docs/mvp/nox-memory-and-studio-mvp-v2.md)
 (MVP 2). Hybrid rule: native SwiftUI owns orchestration (Tasks, Worktrees, Terminal,
-Runs, Providers); WKWebView panels reuse the daemon's existing dashboard/Nox pages
+Runs, Providers); WKWebView panels reuse the daemon's existing dashboard/Voidarch Context pages
 (Repos/memory, Context Pack) until they go native post-MVP.
 
 ```bash
 cd studio
-swift run NoxStudio       # macOS 14+, Apple Silicon primary
+swift run VoidarchStudio       # macOS 14+, Apple Silicon primary
 ```
 
 > **Status: scaffold, compile-verified.** `swift build` succeeds with Xcode 26.6
@@ -22,7 +22,7 @@ The daemon is the extended `pnpm dfc:dashboard` server (default `http://127.0.0.
 - App shell with the nine MVP panels in a `NavigationSplitView` sidebar.
 - Daemon health + refresh (`/api/state`), native Tasks panel (list/add/mark-done via
   `/api/tasks/*`), native Runs list, integrated SwiftTerm terminal running the login shell.
-- WKWebView embeds for the dashboard memory view and the Nox context-pack page.
+- WKWebView embeds for the dashboard memory view and the Voidarch Context context-pack page.
 
 ## MVP work remaining (2026-07-06)
 

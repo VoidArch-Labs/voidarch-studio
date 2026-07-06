@@ -1,14 +1,16 @@
 {
-  "name": "dev-flow-control",
+  "name": "voidarch-studio",
   "version": "0.4.0",
-  "description": "Subscription-first autonomous development control for Claude Code: routes work through GSD phases, Kepler/GitKraken, repo graphs, scoped subagents, Jules, Context7, Firecrawl, hooks, and observability to lower tokens, raise safe autonomy, and improve accuracy.",
+  "description": "Voidarch Studio \u2014 agent orchestration control room for Claude Code: worktrees, agent launching, prompt/provider routing, hooks, observability, and a per-repo dashboard. Repo memory/query/context packs are provided by the standalone @voidarch/context package (Voidarch Context). Formerly dev-flow-control (dfc).",
   "author": {
     "name": "local",
     "email": "david@webinform.hu"
   },
   "license": "MIT",
   "keywords": [
-    "workflow",
+    "voidarch",
+    "studio",
+    "orchestration",
     "gsd",
     "supervisor",
     "token-efficiency",

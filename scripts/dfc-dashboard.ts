@@ -1,4 +1,4 @@
-// dfc:dashboard — Nox: per-repo agent control room. Local-only live server (127.0.0.1).
+// dfc:dashboard — Voidarch Studio: per-repo agent control room. Local-only live server (127.0.0.1).
 //
 //   pnpm dfc:dashboard [--repo-root /path/to/repo] [--port 4949]
 //
@@ -19,8 +19,8 @@ import { homedir } from "node:os";
 import { createServer } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { basename, dirname, extname, join, normalize } from "node:path";
-import { parseArgs, repoRootFromArgs } from "nox-memory/cli";
-import { type DfcMetrics, collectMetrics } from "nox-memory/metrics";
+import { parseArgs, repoRootFromArgs } from "@voidarch/context/cli";
+import { type DfcMetrics, collectMetrics } from "@voidarch/context/metrics";
 import {
   REPO_ROOT,
   embeddedDataDir,
@@ -29,10 +29,10 @@ import {
   parseEnvFile,
   queryResult,
   withDb,
-} from "nox-memory/surreal";
-import { buildContextPack, formatContextPackMarkdown } from "nox-memory/context-pack";
-import { embedChunks, gatherDbTargets, listEmbeddingModels, queryVectors, resolveEmbedConfig } from "nox-memory/vectors";
-import { detectRiskTerms, tokenize } from "nox-memory/scoring";
+} from "@voidarch/context/surreal";
+import { buildContextPack, formatContextPackMarkdown } from "@voidarch/context/context-pack";
+import { embedChunks, gatherDbTargets, listEmbeddingModels, queryVectors, resolveEmbedConfig } from "@voidarch/context/vectors";
+import { detectRiskTerms, tokenize } from "@voidarch/context/scoring";
 import { StringRecordId, Table } from "surrealdb";
 
 // Short timeouts for an interactive dashboard (only if the user has not overridden).
@@ -1019,7 +1019,7 @@ function resolveProvider(provider?: string, model?: string, effort?: string): { 
   return { provider: p, model: m, effort: e };
 }
 
-// ---- Nox defaults (.dfc/nox.env — default provider/model/effort + routing) -----------
+// ---- Launch defaults (legacy .dfc/nox.env — default provider/model/effort + routing) -----------
 
 interface NoxDefaults {
   provider: string;
@@ -1075,7 +1075,7 @@ function writeConfigFile(repoRoot: string, file: string, values: Record<string, 
     saved.push(k);
   }
   mkdirSync(join(repoRoot, ".dfc"), { recursive: true });
-  const body = `# Managed by the Nox dashboard config page. Gitignored — never commit.\n${
+  const body = `# Managed by the Voidarch Studio dashboard config page. Gitignored — never commit.\n${
     Object.entries(current).map(([k, v]) => `${k}=${v}`).join("\n")}\n`;
   writeFileSync(path, body);
   return { saved };
@@ -1148,7 +1148,7 @@ function buildAgentSystemPrompt(t: AgentTools): string | undefined {
   if (t.docs && D[t.docs]) lines.push(D[t.docs]);
   if (t.git && G[t.git]) lines.push(G[t.git]);
   if (!lines.length) return undefined;
-  return "Tool routing for this run (configured from the Nox dashboard):\n- " + lines.join("\n- ");
+  return "Tool routing for this run (configured from the Voidarch Studio dashboard):\n- " + lines.join("\n- ");
 }
 
 interface SpawnedAgent {
@@ -1779,7 +1779,7 @@ async function runAssistantTool(repoRoot: string, name: string, args: Record<str
 }
 
 const ASSISTANT_SYSTEM = (repoRoot: string): string =>
-  `You are Nox, the read-only assistant of the dev-flow-control dashboard for the repository at ${repoRoot}. ` +
+  `You are the read-only Voidarch Studio assistant of the dashboard for the repository at ${repoRoot}. ` +
   `Answer questions about the repo, its architecture, its dev-memory (decisions/lessons/snippets/repo facts/tasks/blockers), ` +
   `agents, workflows, metrics, and token usage. Use the tools to look things up before answering; prefer tool facts over guesses. ` +
   `You cannot modify anything. Be concise and concrete; cite file paths and node names when relevant.`;
@@ -2146,7 +2146,7 @@ async function main(): Promise<void> {
   });
 
   server.listen(port, "127.0.0.1", () => {
-    console.log(`nox dashboard  →  http://127.0.0.1:${port}`);
+    console.log(`voidarch-studio dashboard  →  http://127.0.0.1:${port}`);
     console.log(`repo root      →  ${repoRoot}`);
     console.log("Ctrl-C to stop.");
   });

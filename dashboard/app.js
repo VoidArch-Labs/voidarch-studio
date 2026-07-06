@@ -1,4 +1,4 @@
-/* Nox dashboard client. Plain JS, no dependencies. */
+/* Voidarch Studio dashboard client. Plain JS, no dependencies. */
 'use strict';
 
 let state = null;

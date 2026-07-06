@@ -1,6 +1,6 @@
 # AGENTS.md
 
-This repository is the canonical **Claude Code plugin** `dev-flow-control`, housing two products: **Nox** (repo memory/query engine — the `pnpm dfc:*` CLI below) and **Nox Studio** (the `pnpm dfc:dashboard` agent control room). Boundary and MVP spec: `docs/mvp/nox-and-nox-studio-mvp.md`. **Claude Code is the canonical local supervisor**; Codex and future agents use the same repo-local `dfc` CLI commands for dev memory. The memory layer itself is agent-neutral — every agent reads and writes the same per-repo SurrealDB database. The canonical command surface is `pnpm dfc:*` (TypeScript/tsx); the only Rust piece is the external optional `graphify-surreal` binary behind `pnpm dfc:graph:build`.
+This repository is the canonical **Claude Code plugin** `voidarch-studio` (formerly `dev-flow-control`), housing two products: **Voidarch Context** (repo memory/query engine — `packages/voidarch-context`, CLI `voidarch-context`; the `pnpm dfc:*` scripts below are legacy internal aliases) and **Voidarch Studio** (the `pnpm dfc:dashboard` agent control room). Boundary and MVP spec (historical, pre-rename naming): `docs/mvp/nox-and-nox-studio-mvp.md`. **Claude Code is the canonical local supervisor**; Codex and future agents use the same repo-local `dfc` CLI commands for dev memory. The memory layer itself is agent-neutral — every agent reads and writes the same per-repo SurrealDB database. The canonical command surface is the `voidarch-context` CLI (TypeScript/tsx; `pnpm dfc:*` = legacy aliases); the only Rust piece is the external optional `graphify-surreal` binary behind `pnpm dfc:graph:build`.
 
 ## Shared Dev Memory
 
@@ -67,9 +67,9 @@ Transformers.js model cached outside the repo. The OpenAI-compatible path only r
 requires explicit approval (`DFC_EMBED_APPROVED=1` or `--approve`). Never call a paid
 embedding API silently.
 
-The `nox` package bin aliases the same memory/query commands (`nox context`, `nox embed`,
-`nox page`, and related subcommands). `pnpm dfc:*` scripts remain the agent-neutral
-compatibility contract.
+The `voidarch-context` package bin is the public command surface (`voidarch-context context`,
+`voidarch-context embed`, `voidarch-context serve`, and related subcommands). `pnpm dfc:*`
+scripts remain available as legacy internal aliases.
 
 ## Codex
 

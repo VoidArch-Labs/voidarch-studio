@@ -1,10 +1,10 @@
 // swift-tools-version:6.0
-// Nox Studio — hybrid SwiftUI shell (spec: docs/mvp/nox-memory-and-studio-mvp-v2.md).
-// Build/run: swift run NoxStudio   (macOS 14+, Apple Silicon primary)
+// Voidarch Studio — hybrid SwiftUI shell (spec: docs/mvp/nox-memory-and-studio-mvp-v2.md).
+// Build/run: swift run VoidarchStudio   (macOS 14+, Apple Silicon primary)
 import PackageDescription
 
 let package = Package(
-    name: "NoxStudio",
+    name: "VoidarchStudio",
     platforms: [.macOS(.v14)],
     dependencies: [
         // Integrated terminal (PTY view) — MVP panel per spec §5.
@@ -12,9 +12,9 @@ let package = Package(
     ],
     targets: [
         .executableTarget(
-            name: "NoxStudio",
+            name: "VoidarchStudio",
             dependencies: ["SwiftTerm"],
-            path: "Sources/NoxStudio"
+            path: "Sources/VoidarchStudio"
         ),
     ]
 )
