@@ -1962,6 +1962,8 @@ async function main(): Promise<void> {
 
   const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
+    // repo-scoped routes accept ?repo=<registry id or path>; default = startup repo
+    const reqRepo = () => resolveRepoParam(url.searchParams.get("repo"));
     try {
       if (url.pathname === "/" || url.pathname === "/index.html") {
         const file = serveFile(uiDir, "index.html");
@@ -2105,50 +2107,51 @@ async function main(): Promise<void> {
         }
       } else if (url.pathname === "/api/tasks/add" && req.method === "POST") {
         const body = JSON.parse((await readBody(req)) || "{}") as { goal?: string };
-        const result = await addTask(repoRoot, String(body.goal ?? "").trim());
+        const result = await addTask(reqRepo(), String(body.goal ?? "").trim());
         tasksCache = undefined;
         sendJson(res, result.error ? 400 : 200, result);
       } else if (url.pathname === "/api/tasks/status" && req.method === "POST") {
         const body = JSON.parse((await readBody(req)) || "{}") as { id?: string; status?: string };
-        const result = await setTaskStatus(repoRoot, String(body.id ?? ""), String(body.status ?? ""));
+        const result = await setTaskStatus(reqRepo(), String(body.id ?? ""), String(body.status ?? ""));
         tasksCache = undefined;
         sendJson(res, result.error ? 400 : 200, result);
       } else if (url.pathname === "/api/context" && req.method === "GET") {
         // Studio Context Pack panel: markdown context pack + token estimate (#27).
         const task = (url.searchParams.get("task") ?? "").trim();
+        const ctxRepo = reqRepo();
         if (!task) {
           sendJson(res, 400, { error: "task query param required" });
-        } else if (!memoryConfigured(repoRoot)) {
+        } else if (!memoryConfigured(ctxRepo)) {
           sendJson(res, 400, { error: "dev-memory not configured" });
         } else {
           try {
             const result = await withDbSerial(async (db, c) => {
-              const pack = await buildContextPack(db, c.repoId, task, { repoRoot });
+              const pack = await buildContextPack(db, c.repoId, task, { repoRoot: ctxRepo });
               return {
                 task,
                 markdown: formatContextPackMarkdown(pack),
                 token_estimate: pack.token_budget?.estimated_tokens ?? null,
                 target_tokens: pack.token_budget?.target_tokens ?? null,
               };
-            }, repoRoot);
+            }, ctxRepo);
             sendJson(res, 200, result);
           } catch (err) {
             sendJson(res, 500, { error: (err as Error).message });
           }
         }
       } else if (url.pathname === "/api/worktrees" && req.method === "GET") {
-        sendJson(res, 200, { worktrees: listStudioWorktrees(repoRoot) });
+        sendJson(res, 200, { worktrees: listStudioWorktrees(reqRepo()) });
       } else if (url.pathname === "/api/worktrees" && req.method === "POST") {
         const body = JSON.parse((await readBody(req)) || "{}") as { taskId?: string; branch?: string; baseRef?: string };
-        const result = createStudioWorktree(repoRoot, body);
+        const result = createStudioWorktree(reqRepo(), body);
         sendJson(res, result.error ? 400 : 200, result);
       } else if (/^\/api\/worktrees\/[^/]+\/diff$/.test(url.pathname) && req.method === "GET") {
         const id = decodeURIComponent(url.pathname.split("/")[3] ?? "");
-        const result = diffStudioWorktree(repoRoot, id);
+        const result = diffStudioWorktree(reqRepo(), id);
         sendJson(res, result.error ? 404 : 200, result);
       } else if (/^\/api\/worktrees\/[^/]+$/.test(url.pathname) && req.method === "DELETE") {
         const id = decodeURIComponent(url.pathname.split("/")[3] ?? "");
-        const result = deleteStudioWorktree(repoRoot, id, url.searchParams.get("force") === "1");
+        const result = deleteStudioWorktree(reqRepo(), id, url.searchParams.get("force") === "1");
         sendJson(res, result.error ? 400 : 200, result);
       } else if (url.pathname === "/api/runs" && req.method === "GET") {
         sendJson(res, 200, { runs: await listStudioRuns(repoRoot) });
