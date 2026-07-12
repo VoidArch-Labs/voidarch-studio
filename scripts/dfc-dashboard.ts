@@ -34,6 +34,13 @@ import { buildContextPack, formatContextPackMarkdown } from "@voidarch/context/c
 import { embedChunks, gatherDbTargets, listEmbeddingModels, queryVectors, resolveEmbedConfig } from "@voidarch/context/vectors";
 import { detectRiskTerms, tokenize } from "@voidarch/context/scoring";
 import { StringRecordId, Table } from "surrealdb";
+import {
+  addRepo, createSession, deleteSession, getSession, handleSessionUpgrade,
+  initRepoRegistry, listProfiles, listSessions, loadPersistedSessions,
+  removeRepo, renderPrompt, reposPayload, resolveRepoParam, respawnSession,
+  resizeSession, saveProfiles, sessionTail, signalSession, writeSession,
+  type ProviderProfile,
+} from "./studio-sessions.js";
 
 // Short timeouts for an interactive dashboard (only if the user has not overridden).
 process.env.DFC_SURREAL_CONNECT_TIMEOUT_MS ??= "8000";
@@ -1955,6 +1962,8 @@ async function main(): Promise<void> {
 
   const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
+    // repo-scoped routes accept ?repo=<registry id or path>; default = startup repo
+    const reqRepo = () => resolveRepoParam(url.searchParams.get("repo"));
     try {
       if (url.pathname === "/" || url.pathname === "/index.html") {
         const file = serveFile(uiDir, "index.html");
@@ -1989,10 +1998,89 @@ async function main(): Promise<void> {
             { tools: src.tools, workflow: src.workflow, resumeSessionId: src.session_id });
           sendJson(res, 200, { id: agent.id, status: agent.status });
         }
-      } else if (/^\/api\/sessions\/[^/]+$/.test(url.pathname) && req.method === "GET") {
+      } else if (/^\/api\/hooked-sessions\/[^/]+$/.test(url.pathname) && req.method === "GET") {
         const detail = sessionDetail(repoRoot, url.pathname.split("/")[3]);
         if (detail) sendJson(res, 200, detail);
         else sendJson(res, 404, { error: "unknown session" });
+      } else if (url.pathname === "/api/repos" && req.method === "GET") {
+        sendJson(res, 200, reposPayload());
+      } else if (url.pathname === "/api/repos" && req.method === "POST") {
+        const body = JSON.parse((await readBody(req)) || "{}") as { root?: string };
+        if (!body.root) {
+          sendJson(res, 400, { error: "root (absolute path to a git repo) required" });
+        } else {
+          const result = addRepo(String(body.root));
+          sendJson(res, "error" in result ? 400 : 200, result);
+        }
+      } else if (/^\/api\/repos\/[^/]+$/.test(url.pathname) && req.method === "DELETE") {
+        const ok = removeRepo(decodeURIComponent(url.pathname.split("/")[3] ?? ""));
+        sendJson(res, ok ? 200 : 404, ok ? { ok: true } : { error: "unknown repo" });
+      } else if (url.pathname === "/api/profiles" && req.method === "GET") {
+        sendJson(res, 200, { profiles: listProfiles() });
+      } else if (url.pathname === "/api/profiles" && req.method === "PUT") {
+        const body = JSON.parse((await readBody(req)) || "{}") as { profiles?: ProviderProfile[] };
+        if (!Array.isArray(body.profiles)) {
+          sendJson(res, 400, { error: "profiles array required" });
+        } else {
+          saveProfiles(body.profiles);
+          sendJson(res, 200, { ok: true, profiles: listProfiles() });
+        }
+      } else if (url.pathname === "/api/prompt/render" && req.method === "POST") {
+        const body = JSON.parse((await readBody(req)) || "{}") as { task?: string; contextPack?: string; worktreePath?: string };
+        sendJson(res, 200, renderPrompt(String(body.task ?? ""), body.contextPack ?? "", body.worktreePath ?? ""));
+      } else if (url.pathname === "/api/sessions" && req.method === "GET") {
+        const repo = url.searchParams.get("repo");
+        sendJson(res, 200, { sessions: listSessions(repo ? resolveRepoParam(repo) : undefined) });
+      } else if (url.pathname === "/api/sessions" && req.method === "POST") {
+        const body = JSON.parse((await readBody(req)) || "{}") as {
+          repo?: string; profileId?: string; taskId?: string; worktreeId?: string;
+          cwd?: string; prompt?: string; model?: string; effort?: string;
+        };
+        try {
+          const sessRepo = resolveRepoParam(body.repo);
+          let cwd = body.cwd;
+          if (!cwd && body.worktreeId) {
+            const wt = listStudioWorktrees(sessRepo).find((w) => w.id === body.worktreeId);
+            if (!wt) throw new Error(`unknown worktree: ${body.worktreeId}`);
+            cwd = wt.path;
+          }
+          const meta = createSession({
+            repoRoot: sessRepo, profileId: String(body.profileId ?? ""), taskId: body.taskId,
+            worktreeId: body.worktreeId, cwd, prompt: body.prompt, model: body.model, effort: body.effort,
+          });
+          sendJson(res, 200, meta);
+        } catch (err) {
+          sendJson(res, 400, { error: (err as Error).message });
+        }
+      } else if (/^\/api\/sessions\/[^/]+$/.test(url.pathname) && req.method === "GET") {
+        const id = url.pathname.split("/")[3] ?? "";
+        const live = getSession(id);
+        if (live) sendJson(res, 200, { session: live.meta, tail: sessionTail(id) });
+        else sendJson(res, 404, { error: "unknown session" });
+      } else if (/^\/api\/sessions\/[^/]+$/.test(url.pathname) && req.method === "DELETE") {
+        const id = url.pathname.split("/")[3] ?? "";
+        const ok = deleteSession(id, url.searchParams.get("purge") === "1");
+        sendJson(res, ok ? 200 : 404, ok ? { ok: true } : { error: "unknown session" });
+      } else if (/^\/api\/sessions\/[^/]+\/input$/.test(url.pathname) && req.method === "POST") {
+        const body = JSON.parse((await readBody(req)) || "{}") as { data?: string };
+        const ok = writeSession(url.pathname.split("/")[3] ?? "", String(body.data ?? ""));
+        sendJson(res, ok ? 200 : 404, ok ? { ok: true } : { error: "session not running" });
+      } else if (/^\/api\/sessions\/[^/]+\/signal$/.test(url.pathname) && req.method === "POST") {
+        const body = JSON.parse((await readBody(req)) || "{}") as { signal?: string };
+        const sig = ["SIGINT", "SIGTERM", "SIGKILL"].includes(String(body.signal)) ? body.signal as "SIGINT" | "SIGTERM" | "SIGKILL" : "SIGTERM";
+        const ok = signalSession(url.pathname.split("/")[3] ?? "", sig);
+        sendJson(res, ok ? 200 : 404, ok ? { ok: true } : { error: "session not running" });
+      } else if (/^\/api\/sessions\/[^/]+\/resize$/.test(url.pathname) && req.method === "POST") {
+        const body = JSON.parse((await readBody(req)) || "{}") as { cols?: number; rows?: number };
+        const ok = resizeSession(url.pathname.split("/")[3] ?? "", Number(body.cols), Number(body.rows));
+        sendJson(res, ok ? 200 : 404, ok ? { ok: true } : { error: "session not running" });
+      } else if (/^\/api\/sessions\/[^/]+\/respawn$/.test(url.pathname) && req.method === "POST") {
+        const body = JSON.parse((await readBody(req)) || "{}") as { resume?: boolean; prompt?: string };
+        try {
+          sendJson(res, 200, respawnSession(url.pathname.split("/")[3] ?? "", { resume: !!body.resume, prompt: body.prompt }));
+        } catch (err) {
+          sendJson(res, 400, { error: (err as Error).message });
+        }
       } else if (url.pathname === "/api/workflows/run" && req.method === "POST") {
         const body = JSON.parse((await readBody(req)) || "{}") as { name?: string };
         const wf = collectWorkflows(repoRoot).find((w) => w.name === String(body.name ?? ""));
@@ -2023,50 +2111,51 @@ async function main(): Promise<void> {
         }
       } else if (url.pathname === "/api/tasks/add" && req.method === "POST") {
         const body = JSON.parse((await readBody(req)) || "{}") as { goal?: string };
-        const result = await addTask(repoRoot, String(body.goal ?? "").trim());
+        const result = await addTask(reqRepo(), String(body.goal ?? "").trim());
         tasksCache = undefined;
         sendJson(res, result.error ? 400 : 200, result);
       } else if (url.pathname === "/api/tasks/status" && req.method === "POST") {
         const body = JSON.parse((await readBody(req)) || "{}") as { id?: string; status?: string };
-        const result = await setTaskStatus(repoRoot, String(body.id ?? ""), String(body.status ?? ""));
+        const result = await setTaskStatus(reqRepo(), String(body.id ?? ""), String(body.status ?? ""));
         tasksCache = undefined;
         sendJson(res, result.error ? 400 : 200, result);
       } else if (url.pathname === "/api/context" && req.method === "GET") {
         // Studio Context Pack panel: markdown context pack + token estimate (#27).
         const task = (url.searchParams.get("task") ?? "").trim();
+        const ctxRepo = reqRepo();
         if (!task) {
           sendJson(res, 400, { error: "task query param required" });
-        } else if (!memoryConfigured(repoRoot)) {
+        } else if (!memoryConfigured(ctxRepo)) {
           sendJson(res, 400, { error: "dev-memory not configured" });
         } else {
           try {
             const result = await withDbSerial(async (db, c) => {
-              const pack = await buildContextPack(db, c.repoId, task, { repoRoot });
+              const pack = await buildContextPack(db, c.repoId, task, { repoRoot: ctxRepo });
               return {
                 task,
                 markdown: formatContextPackMarkdown(pack),
                 token_estimate: pack.token_budget?.estimated_tokens ?? null,
                 target_tokens: pack.token_budget?.target_tokens ?? null,
               };
-            }, repoRoot);
+            }, ctxRepo);
             sendJson(res, 200, result);
           } catch (err) {
             sendJson(res, 500, { error: (err as Error).message });
           }
         }
       } else if (url.pathname === "/api/worktrees" && req.method === "GET") {
-        sendJson(res, 200, { worktrees: listStudioWorktrees(repoRoot) });
+        sendJson(res, 200, { worktrees: listStudioWorktrees(reqRepo()) });
       } else if (url.pathname === "/api/worktrees" && req.method === "POST") {
         const body = JSON.parse((await readBody(req)) || "{}") as { taskId?: string; branch?: string; baseRef?: string };
-        const result = createStudioWorktree(repoRoot, body);
+        const result = createStudioWorktree(reqRepo(), body);
         sendJson(res, result.error ? 400 : 200, result);
       } else if (/^\/api\/worktrees\/[^/]+\/diff$/.test(url.pathname) && req.method === "GET") {
         const id = decodeURIComponent(url.pathname.split("/")[3] ?? "");
-        const result = diffStudioWorktree(repoRoot, id);
+        const result = diffStudioWorktree(reqRepo(), id);
         sendJson(res, result.error ? 404 : 200, result);
       } else if (/^\/api\/worktrees\/[^/]+$/.test(url.pathname) && req.method === "DELETE") {
         const id = decodeURIComponent(url.pathname.split("/")[3] ?? "");
-        const result = deleteStudioWorktree(repoRoot, id, url.searchParams.get("force") === "1");
+        const result = deleteStudioWorktree(reqRepo(), id, url.searchParams.get("force") === "1");
         sendJson(res, result.error ? 400 : 200, result);
       } else if (url.pathname === "/api/runs" && req.method === "GET") {
         sendJson(res, 200, { runs: await listStudioRuns(repoRoot) });
@@ -2141,7 +2230,25 @@ async function main(): Promise<void> {
         else res.writeHead(404).end("not found");
       }
     } catch (err) {
-      sendJson(res, 500, { error: (err as Error).message });
+      const msg = (err as Error).message ?? String(err);
+      sendJson(res, msg.startsWith("unknown repo") ? 400 : 500, { error: msg });
+    }
+  });
+
+  server.on("error", (err: NodeJS.ErrnoException) => {
+    if (err.code === "EADDRINUSE") {
+      console.error(`port ${port} already in use — another Studio daemon is likely running.`);
+      process.exit(0);
+    }
+    throw err;
+  });
+
+  initRepoRegistry(repoRoot);
+  loadPersistedSessions();
+  server.on("upgrade", (req, socket, head) => {
+    if (!handleSessionUpgrade(req, socket, head)) {
+      socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
+      socket.destroy();
     }
   });
 

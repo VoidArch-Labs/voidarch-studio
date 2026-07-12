@@ -126,6 +126,9 @@ const ui = {
   openWorkflows: new Set(),
   openTasks: new Set(),
   configStamp: '',
+  openWorktrees: new Set(), wtDiffCache: {},
+  openRuns: new Set(),
+  sess: { attachedId: null, ws: null, term: null, fit: null, resizeHandler: null },
 };
 
 function editingIn(el) {
@@ -217,7 +220,7 @@ async function toggleSession(id) {
   ui.openSession = id;
   if (!ui.sessionCache[id]) {
     try {
-      ui.sessionCache[id] = await (await fetch('/api/sessions/' + encodeURIComponent(id))).json();
+      ui.sessionCache[id] = await (await fetch('/api/hooked-sessions/' + encodeURIComponent(id))).json();
     } catch { ui.sessionCache[id] = { error: 'failed to load' }; }
   }
   renderAgents();
@@ -1375,6 +1378,347 @@ function renderVectors() {
   $('vectors-hint').textContent = s.available ? tot.embedded + '/' + tot.chunks + ' embedded' : 'off';
 }
 
+// ---- sessions / worktrees / runs (daemon-backed panels) --------------------------------
+// These talk to the sessions daemon (repos/profiles/sessions/worktrees/prompt-render).
+// Same-origin relative fetches, matching every other call in this file — the dashboard
+// server is expected to be the daemon itself (or proxy it), same as /api/state etc.
+// Every call is wrapped so an older daemon missing these routes degrades to an
+// "unavailable" note instead of throwing and breaking other panels.
+
+async function safeJson(url, opts) {
+  try {
+    const res = await fetch(url, opts);
+    if (!res.ok) return { __unavailable: true };
+    return await res.json();
+  } catch {
+    return { __unavailable: true };
+  }
+}
+
+// -- repo picker (header) --
+
+async function initRepoSelect() {
+  const d = await safeJson('/api/repos');
+  const sel = $('repo-select');
+  if (d.__unavailable || !d.repos || !d.repos.length) return;
+  const saved = localStorage.getItem('dfc-repo');
+  sel.innerHTML = d.repos.map((r) => '<option value="' + esc(r.id) + '">' + esc(r.name || r.root) + '</option>').join('');
+  const pick = (saved && d.repos.some((r) => r.id === saved)) ? saved : ((d.repos.find((r) => r.current) || d.repos[0]).id);
+  sel.value = pick;
+  sel.onchange = () => { localStorage.setItem('dfc-repo', sel.value); refreshSessions(); };
+}
+
+function currentRepoId() { return ($('repo-select').value) || ''; }
+
+// -- session launch form --
+
+let profilesList = [];
+
+async function initSessionForm() {
+  const d = await safeJson('/api/profiles');
+  profilesList = (!d.__unavailable && d.profiles) ? d.profiles : [];
+  $('sess-profile').innerHTML = profilesList.length
+    ? profilesList.map((p) => '<option value="' + esc(p.id) + '">' + esc(p.displayName || p.id) + '</option>').join('')
+    : '<option value="">(unavailable)</option>';
+  $('sess-profile').onchange = () => {
+    const p = profilesList.find((x) => x.id === $('sess-profile').value);
+    if (p) { $('sess-model').value = p.defaultModel || ''; $('sess-effort').value = p.effort || ''; }
+  };
+  if (profilesList.length) $('sess-profile').onchange();
+}
+
+function populateTaskWorktreeSelects() {
+  const tasks = (state && state.tasks) || [];
+  const taskOpts = '<option value="">(none)</option>' +
+    tasks.map((t) => '<option value="' + esc(t.id) + '">' + esc(String(t.goal || '').slice(0, 60)) + '</option>').join('');
+  if (!editingIn($('sess-task').parentElement)) $('sess-task').innerHTML = taskOpts;
+  $('wt-task').innerHTML = '<option value="">Select task…</option>' +
+    tasks.map((t) => '<option value="' + esc(t.id) + '">' + esc(String(t.goal || '').slice(0, 60)) + '</option>').join('');
+  const worktrees = (state && state.worktrees) || [];
+  $('sess-worktree').innerHTML = '<option value="">(none)</option>' +
+    worktrees.map((w) => '<option value="' + esc(w.id) + '">' + esc(w.id) + '</option>').join('');
+}
+
+async function renderPromptSpec() {
+  const taskId = $('sess-task').value;
+  const tasks = (state && state.tasks) || [];
+  const task = tasks.find((t) => t.id === taskId);
+  const worktreeId = $('sess-worktree').value;
+  const worktrees = (state && state.worktrees) || [];
+  const wt = worktrees.find((w) => w.id === worktreeId);
+  // task param shape isn't pinned by the contract; send the selected task object,
+  // or a minimal {goal} built from the freeform prompt box if none is selected.
+  const body = { task: task || { goal: $('sess-prompt').value } };
+  if (wt && wt.path) body.worktreePath = wt.path;
+  const d = await safeJson('/api/prompt/render', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
+  if (d.__unavailable) { $('sess-render-hash').textContent = 'unavailable'; return; }
+  if (d.prompt != null) $('sess-prompt').value = d.prompt;
+  $('sess-render-hash').textContent = d.hash ? 'hash ' + String(d.hash).slice(0, 12) : '';
+}
+
+async function launchSession() {
+  const msg = $('sess-launch-msg');
+  const profileId = $('sess-profile').value;
+  if (!profileId) { msg.textContent = 'select a profile'; return; }
+  $('sess-launch').disabled = true;
+  msg.textContent = 'launching…';
+  const body = {
+    repo: currentRepoId() || undefined,
+    profileId,
+    taskId: $('sess-task').value || undefined,
+    worktreeId: $('sess-worktree').value || undefined,
+    prompt: $('sess-prompt').value || undefined,
+    model: $('sess-model').value || undefined,
+    effort: $('sess-effort').value || undefined,
+  };
+  const d = await safeJson('/api/sessions', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
+  $('sess-launch').disabled = false;
+  if (d.__unavailable || d.error) { msg.textContent = 'launch failed' + (d.error ? ': ' + d.error : ' (daemon unavailable)'); return; }
+  msg.textContent = 'launched ' + esc(d.id || '');
+  refreshSessions();
+  if (d.id) attachSession(d.id);
+}
+
+// -- session list + actions --
+
+let sessionsCache = [];
+const SESS_PILL = { running: 'running', exited: 'done', orphaned: 'warn', killed: 'fail' };
+
+async function refreshSessions() {
+  const repo = currentRepoId();
+  const d = await safeJson('/api/sessions' + (repo ? '?repo=' + encodeURIComponent(repo) : ''));
+  if (d.__unavailable) {
+    $('p-sessions').innerHTML = '<div class="dim">sessions unavailable</div>';
+    $('sessions-hint').textContent = 'unavailable';
+    return;
+  }
+  sessionsCache = d.sessions || [];
+  renderSessionsList();
+}
+
+function renderSessionsList() {
+  if (!sessionsCache.length) {
+    $('p-sessions').innerHTML = '<div class="dim">No sessions. Launch one above.</div>';
+    $('sessions-hint').textContent = '0';
+    return;
+  }
+  $('p-sessions').innerHTML = '<div class="cards">' + sessionsCache.map((s) => {
+    const attached = ui.sess.attachedId === s.id;
+    return '<div class="card' + (attached ? ' live-card' : '') + '">' +
+      '<h3><span class="pill ' + esc(SESS_PILL[s.status] || 'off') + '">' + esc(String(s.status || '').toUpperCase()) + '</span> ' +
+      '<span class="mono">' + esc(String(s.id).slice(0, 12)) + '</span></h3>' +
+      '<div class="dim">profile ' + esc(s.profileId || '—') + ' · task ' + esc(s.taskId || '—') + ' · worktree ' + esc(s.worktreeId || '—') +
+      ' · ' + age(s.createdAt) + ' old</div>' +
+      '<div class="card-actions">' +
+      '<button class="mini-btn" data-sact="attach" data-sid="' + esc(s.id) + '">Attach</button>' +
+      (s.status === 'running' ? '<button class="mini-btn" data-sact="sigint" data-sid="' + esc(s.id) + '">Interrupt</button>' : '') +
+      (s.status === 'running' ? '<button class="kill-btn" data-sact="sigterm" data-sid="' + esc(s.id) + '">Kill</button>' : '') +
+      '<label style="display:inline-flex;align-items:center;gap:3px;font-size:11px;color:var(--dim)">' +
+      '<input type="checkbox" class="resume-flag" data-sid="' + esc(s.id) + '"> resume</label>' +
+      '<button class="mini-btn" data-sact="respawn" data-sid="' + esc(s.id) + '">Respawn</button>' +
+      '<button class="mini-btn" data-sact="delete" data-sid="' + esc(s.id) + '">Delete</button>' +
+      '</div></div>';
+  }).join('') + '</div>';
+  for (const b of $('p-sessions').querySelectorAll('[data-sact]')) {
+    b.onclick = () => sessionAction(b.dataset.sact, b.dataset.sid, b);
+  }
+  $('sessions-hint').textContent = sessionsCache.length + ' session(s)';
+}
+
+async function sessionAction(act, id, btn) {
+  if (act === 'attach') { attachSession(id); return; }
+  btn.disabled = true;
+  if (act === 'sigint' || act === 'sigterm') {
+    await safeJson('/api/sessions/' + encodeURIComponent(id) + '/signal', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ signal: act === 'sigint' ? 'SIGINT' : 'SIGTERM' }),
+    });
+    refreshSessions();
+  } else if (act === 'respawn') {
+    const resume = document.querySelector('.resume-flag[data-sid="' + CSS.escape(id) + '"]');
+    const d = await safeJson('/api/sessions/' + encodeURIComponent(id) + '/respawn', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ resume: resume ? resume.checked : false }),
+    });
+    refreshSessions();
+    if (d && d.id) attachSession(d.id);
+  } else if (act === 'delete') {
+    if (!confirm('Delete session ' + id.slice(0, 12) + '?')) { btn.disabled = false; return; }
+    await safeJson('/api/sessions/' + encodeURIComponent(id), { method: 'DELETE' });
+    if (ui.sess.attachedId === id) detachSession();
+    refreshSessions();
+  }
+}
+
+// -- terminal attach/detach --
+// Choice: rely solely on the WS replay-on-connect (server sends recent buffer as 'd'
+// frames right after connect, per the contract) rather than also prefilling from
+// GET /api/sessions/:id — avoids writing the same scrollback twice.
+
+function ensureTerminal() {
+  if (ui.sess.term) return ui.sess.term;
+  const term = new Terminal({ convertEol: true, fontSize: 13, theme: { background: '#05060f' } });
+  const fit = new FitAddon.FitAddon();
+  term.loadAddon(fit);
+  term.open($('sess-term'));
+  fit.fit();
+  // Registered once — always routes to whatever WS is currently attached, so
+  // re-attaching never stacks duplicate listeners on the terminal instance.
+  term.onData((data) => {
+    const ws = ui.sess.ws;
+    if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ t: 'i', d: data }));
+  });
+  ui.sess.term = term;
+  ui.sess.fit = fit;
+  return term;
+}
+
+function detachSession() {
+  if (ui.sess.ws) { try { ui.sess.ws.close(); } catch { /* ignore */ } ui.sess.ws = null; }
+  if (ui.sess.resizeHandler) { window.removeEventListener('resize', ui.sess.resizeHandler); ui.sess.resizeHandler = null; }
+  ui.sess.attachedId = null;
+  const card = $('sess-terminal-card');
+  if (card) card.hidden = true;
+}
+
+function attachSession(id) {
+  if (ui.sess.attachedId === id) return;
+  detachSession(); // never leave a prior WS open when switching sessions
+  ui.sess.attachedId = id;
+  $('sess-terminal-card').hidden = false;
+  $('sess-terminal-label').textContent = id.slice(0, 12);
+  const term = ensureTerminal();
+  term.reset();
+  term.writeln('\x1b[2mconnecting to session ' + id.slice(0, 12) + '…\x1b[0m');
+
+  let ws;
+  try {
+    ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws/sessions/' + encodeURIComponent(id));
+  } catch (e) {
+    term.writeln('\x1b[31mconnection failed: ' + esc(e.message) + '\x1b[0m');
+    ui.sess.attachedId = null;
+    return;
+  }
+  ui.sess.ws = ws;
+
+  const sendResize = () => {
+    if (ui.sess.fit) ui.sess.fit.fit();
+    if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ t: 'r', cols: term.cols, rows: term.rows }));
+  };
+  ws.onopen = sendResize;
+  ws.onmessage = (ev) => {
+    let msg;
+    try { msg = JSON.parse(ev.data); } catch { return; }
+    if (msg.t === 'd') term.write(msg.d);
+    else if (msg.t === 'exit') term.writeln('\r\n\x1b[33m[session exited, code ' + msg.code + ']\x1b[0m');
+  };
+  ws.onerror = () => { /* onclose follows and shows the banner */ };
+  ws.onclose = () => {
+    if (ui.sess.attachedId === id && ui.sess.ws === ws) {
+      term.writeln('\r\n\x1b[2m[connection lost]\x1b[0m');
+      ui.sess.ws = null;
+    }
+  };
+
+  const onResize = () => sendResize();
+  window.addEventListener('resize', onResize);
+  ui.sess.resizeHandler = onResize;
+}
+
+// -- worktrees --
+
+function renderWorktrees() {
+  const worktrees = (state && state.worktrees) || [];
+  if (!worktrees.length) {
+    $('p-worktrees').innerHTML = '<div class="dim">No worktrees. Create one above.</div>';
+    $('worktrees-hint').textContent = '0';
+    return;
+  }
+  $('p-worktrees').innerHTML = worktrees.map((w) => {
+    const open = ui.openWorktrees.has(w.id);
+    return '<details class="card task-card"' + (open ? ' open' : '') + ' data-wt="' + esc(w.id) + '">' +
+      '<summary><b class="mono">' + esc(w.id) + '</b> <span class="dim">' + esc(w.path || w.branch || '') + '</span>' +
+      (w.taskId ? ' <span class="dim">task ' + esc(w.taskId) + '</span>' : '') + '</summary>' +
+      '<div style="margin-top:8px" class="wt-detail" data-wt-detail="' + esc(w.id) + '">' +
+      (open ? (ui.wtDiffCache[w.id] || '<div class="dim">loading diff…</div>') : '') + '</div>' +
+      '<div class="card-actions"><button class="mini-btn" data-wact="delete" data-wid="' + esc(w.id) + '">Delete</button></div>' +
+      '</details>';
+  }).join('');
+  for (const d of $('p-worktrees').querySelectorAll('.task-card')) {
+    d.ontoggle = () => {
+      const id = d.dataset.wt;
+      if (d.open) { ui.openWorktrees.add(id); loadWorktreeDiff(id); } else ui.openWorktrees.delete(id);
+    };
+  }
+  for (const b of $('p-worktrees').querySelectorAll('[data-wact="delete"]')) {
+    b.onclick = () => deleteWorktree(b.dataset.wid);
+  }
+  $('worktrees-hint').textContent = String(worktrees.length);
+}
+
+async function loadWorktreeDiff(id) {
+  const d = await safeJson('/api/worktrees/' + encodeURIComponent(id) + '/diff');
+  const html = d.__unavailable
+    ? '<div class="dim">diff unavailable</div>'
+    : ((d.files && d.files.length ? '<div class="dim">changed: ' + d.files.map(esc).join(', ') + '</div>' : '<div class="dim">no changed files</div>') +
+      '<pre class="mono diff-pre">' + esc(d.diff || '') + '</pre>');
+  ui.wtDiffCache[id] = html;
+  const el = document.querySelector('[data-wt-detail="' + CSS.escape(id) + '"]');
+  if (el) el.innerHTML = html;
+}
+
+async function deleteWorktree(id) {
+  if (!confirm('Delete worktree ' + id + '?')) return;
+  let d = await safeJson('/api/worktrees/' + encodeURIComponent(id), { method: 'DELETE' });
+  if (d && d.error) {
+    if (confirm('Delete failed (' + d.error + '). Force delete?')) {
+      d = await safeJson('/api/worktrees/' + encodeURIComponent(id) + '?force=1', { method: 'DELETE' });
+    }
+  }
+  loadState(true);
+}
+
+$('wt-create').onclick = async () => {
+  const taskId = $('wt-task').value;
+  if (!taskId) { $('wt-create-msg').textContent = 'select a task'; return; }
+  $('wt-create').disabled = true;
+  const d = await safeJson('/api/worktrees', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ taskId }),
+  });
+  $('wt-create').disabled = false;
+  $('wt-create-msg').textContent = (d.__unavailable || d.error) ? 'failed' : 'created ✓';
+  loadState(true);
+};
+
+// -- runs --
+
+function renderRuns() {
+  const runs = (state && state.studio_runs) || [];
+  if (!runs.length) {
+    $('p-runs').innerHTML = '<div class="dim">No studio runs yet.</div>';
+    $('runs-hint').textContent = '0';
+    return;
+  }
+  $('p-runs').innerHTML = runs.map((r) => {
+    const open = ui.openRuns.has(r.id);
+    return '<details class="card task-card"' + (open ? ' open' : '') + ' data-run="' + esc(r.id) + '">' +
+      '<summary>' + pill(r.status) + ' <span class="mono">' + esc(String(r.id).slice(0, 12)) + '</span> ' +
+      '<span class="dim">' + esc(r.provider || '') + ' · task ' + esc(r.taskId || '—') + '</span></summary>' +
+      '<div style="margin-top:6px"><div class="dim">promptHash ' + esc(r.promptHash || '') + ' · exit ' + esc(r.exitCode ?? '') + '</div>' +
+      '<div style="margin-top:4px">' + (Array.isArray(r.changedFiles) && r.changedFiles.length
+        ? '<div class="dim">changed files:</div><div class="mono">' + r.changedFiles.map(esc).join('<br>') + '</div>'
+        : '<div class="dim">no changed files recorded</div>') + '</div></div></details>';
+  }).join('');
+  for (const d of $('p-runs').querySelectorAll('.task-card')) {
+    d.ontoggle = () => { if (d.open) ui.openRuns.add(d.dataset.run); else ui.openRuns.delete(d.dataset.run); };
+  }
+  $('runs-hint').textContent = String(runs.length);
+}
+
 // ---- config -----------------------------------------------------------------------------
 
 function configField(label, key, value, opts) {
@@ -1466,6 +1810,7 @@ function render() {
   renderControl();
   initPickers();
   renderAgents();
+  try { populateTaskWorktreeSelects(); renderWorktrees(); renderRuns(); } catch { /* daemon panels are best-effort */ }
   renderWorkflows();
   renderTasks();
   renderMemory();
@@ -1492,6 +1837,13 @@ window.loadState = loadState;
 
 $('jump').onchange = () => { if ($('jump').value) jumpTo($('jump').value); $('jump').value = ''; };
 $('agent-launch').onclick = launchAgent;
+$('sess-render').onclick = renderPromptSpec;
+$('sess-launch').onclick = launchSession;
+$('sess-detach').onclick = detachSession;
+$('sessions').addEventListener('toggle', () => { if (!$('sessions').open) detachSession(); });
+initRepoSelect().then(refreshSessions);
+initSessionForm();
+setInterval(refreshSessions, 5000);
 for (const sel of document.querySelectorAll('.tools-grid select[data-tool]')) sel.onchange = updateToolControls;
 $('agent-mode').onchange = updateToolControls;
 $('assistant-toggle').onclick = () => { $('assistant').hidden = !$('assistant').hidden; if (!$('assistant').hidden) $('assistant-q').focus(); };

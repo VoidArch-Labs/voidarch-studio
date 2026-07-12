@@ -1,5 +1,7 @@
 # Nox Memory and Nox Studio MVP Specification (v2 — canonical)
 
+> Superseded: the native shell is now Tauri (`studio-tauri/`) and the daemon owns PTY sessions — see README.
+
 > Working names. “Nox” is a placeholder. The important split is between the drop-in memory/query engine and the power-user orchestration studio.
 
 > **Adopted 2026-07-05.** Supersedes [`nox-and-nox-studio-mvp.md`](nox-and-nox-studio-mvp.md)

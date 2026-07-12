@@ -1,5 +1,7 @@
 # Nox and Nox Studio — MVP Specification
 
+> Superseded: the native shell is now Tauri (`studio-tauri/`) and the daemon owns PTY sessions — see README.
+
 Status: **superseded 2026-07-05 by [`nox-memory-and-studio-mvp-v2.md`](nox-memory-and-studio-mvp-v2.md)**
 where the two disagree — v2 redefines the Studio MVP as a hybrid SwiftUI native app with
 worktrees + integrated terminal, and makes Nox Memory an installable npm package

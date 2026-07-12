@@ -88,6 +88,39 @@ stream-json `result` event; a comparison table summarizes the last runs. Workflo
 **Run ▸** posts `/api/workflows/run`, which deploys an agent instructed to execute the
 workflow script via the Workflow tool — runs are tagged and listed as the card's history.
 
+## Interactive sessions
+
+The **Sessions** panel (backed by [`scripts/studio-sessions.ts`](../scripts/studio-sessions.ts))
+runs real PTYs — via `node-pty` — for `claude`, `codex`, or a plain shell, streamed to the
+browser over WebSocket and rendered with xterm.js. The daemon, not the desktop shell, owns
+the child process: sessions **survive closing the Tauri app or the browser tab**, and are
+only marked `orphaned` (transcript preserved) if the daemon itself restarts. Transcripts
+and resume metadata live at `.agent-runs/studio-sessions/<id>/{meta.json,transcript.log}`.
+
+Built-in provider profiles (`~/.voidarch-studio/providers.json` overrides/extends these):
+`claude-code` (resume via `claude -c`), `codex-cli` (resume via `codex resume --last`),
+`generic-shell`. Because the API is plain HTTP + WebSocket, **any harness can drive it** —
+this isn't limited to Claude Code; it's cross-harness orchestration.
+
+```bash
+# register a repo, then launch a session
+curl -s -X POST http://127.0.0.1:4949/api/sessions \
+  -H 'content-type: application/json' \
+  -d '{"repo":"/path/to/repo","profileId":"claude-code","prompt":"fix the flaky test"}'
+# -> { "id": "s-...", "status": "running", ... }
+
+# send keystrokes/text to a running session
+curl -s -X POST http://127.0.0.1:4949/api/sessions/s-xxxx/input \
+  -H 'content-type: application/json' -d '{"data":"y\n"}'
+
+# interrupt (Ctrl-C), terminate, or force-kill
+curl -s -X POST http://127.0.0.1:4949/api/sessions/s-xxxx/signal \
+  -H 'content-type: application/json' -d '{"signal":"SIGINT"}'
+```
+
+Attach a terminal client to `ws://127.0.0.1:4949/ws/sessions/s-xxxx` for the live stream
+(send `{"t":"i","d":"..."}` to type, `{"t":"r","cols":..,"rows":..}` to resize).
+
 ## Mercury assistant (read-only)
 
 `✦ Assistant` opens a chat drawer backed by an OpenAI-compatible API (Inception Labs

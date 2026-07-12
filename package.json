@@ -3,7 +3,7 @@
   "version": "0.4.0",
   "private": true,
   "type": "module",
-  "description": "Voidarch Studio (agent orchestration control room) monorepo \u2014 ships @voidarch/context (packages/voidarch-context), the standalone repo memory/query/context-pack engine, plus the Studio dashboard, hooks, and Claude Code plugin. Legacy internal name: dev-flow-control (dfc).",
+  "description": "Voidarch Studio (agent orchestration control room) monorepo — ships @voidarch/context (packages/voidarch-context), the standalone repo memory/query/context-pack engine, plus the Studio dashboard, hooks, and Claude Code plugin. Legacy internal name: dev-flow-control (dfc).",
   "license": "MIT",
   "scripts": {
     "dfc:db:check": "tsx packages/voidarch-context/scripts/dfc-db-check.ts",
@@ -39,10 +39,13 @@
   },
   "dependencies": {
     "@voidarch/context": "workspace:*",
-    "surrealdb": "^2.0.4"
+    "node-pty": "^1.1.0",
+    "surrealdb": "^2.0.4",
+    "ws": "^8.21.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
+    "@types/ws": "^8.18.1",
     "tsx": "^4.22.4",
     "typescript": "^5.7.0"
   }

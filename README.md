@@ -5,7 +5,7 @@
 Voidarch is two products in one monorepo:
 
 - **[Voidarch Context](packages/voidarch-context/README.md)** (`@voidarch/context`) — a standalone, drop-in **repo memory / query / context-pack engine**. Index a repo, remember decisions, and hand any agent a token-budgeted context pack — one npm install, no Docker, no Python, no API key.
-- **Voidarch Studio** — a power-user **agent orchestration control room**: worktrees, terminal/PTY, agent launching, prompt/provider routing, safety hooks, observability, a per-repo web dashboard, and a native SwiftUI shell.
+- **Voidarch Studio** — a power-user **agent orchestration control room**: worktrees, terminal/PTY, agent launching, prompt/provider routing, safety hooks, observability, a per-repo web dashboard, and a thin Tauri v2 desktop shell.
 
 The boundary rule: *if it retrieves, remembers, indexes, searches, or explains repo context, it's **Context**; if it launches, routes, controls, observes, approves, or manages agents, it's **Studio***. Studio builds on Context; Context never needs Studio.
 
@@ -28,7 +28,8 @@ The boundary rule: *if it retrieves, remembers, indexes, searches, or explains r
   - [Target-repo mode & hosted backend](#target-repo-mode--hosted-backend)
 - [Voidarch Studio — the control room](#voidarch-studio--the-control-room)
   - [Web dashboard](#web-dashboard)
-  - [Native SwiftUI app](#native-swiftui-app)
+  - [Interactive sessions](#interactive-sessions)
+  - [Tauri desktop shell](#tauri-desktop-shell)
   - [Feature flags](#feature-flags)
 - [The Claude Code plugin](#the-claude-code-plugin)
   - [Goals](#goals)
@@ -73,9 +74,10 @@ packages/voidarch-context/   @voidarch/context — the standalone memory engine 
   schema/                      SurrealDB migrations (auto-applied for embedded DBs)
   page/                        local info/search/context page (voidarch-context serve)
   docs/product-page.md         product copy
-dashboard/                   Studio web dashboard client (single page, no deps)
-scripts/                     Studio-side entrypoints (dashboard, init scaffold, flags, grok-build)
-studio/                      Voidarch Studio native SwiftUI shell (macOS 14+)
+dashboard/                   Studio web dashboard client (Sessions/Worktrees/Runs + xterm.js, no build step)
+scripts/                     Studio-side entrypoints (dashboard server, interactive session engine, init scaffold, flags, grok-build)
+  studio-sessions.ts           daemon-owned PTY session engine (node-pty), backs /api/sessions + /ws/sessions/:id
+studio-tauri/                 thin Tauri v2 shell: supervises the daemon, shows the dashboard in a native window
 skills/                      Claude Code skills (workflow + memory; legacy /dfc-* names)
 agents/                      scoped subagent definitions
 hooks/                       fail-closed safety + observability hooks
@@ -184,14 +186,40 @@ Local-only (binds 127.0.0.1), zero extra dependencies. A single-page aurora-dark
 
 Everything degrades gracefully: no DB → memory panel reads "off"; no graph → prompt to build one; no transcripts → tokens panel reads "off"; no Mercury key → assistant explains how to configure it. Full guide: [`docs/studio-dashboard.md`](docs/studio-dashboard.md).
 
-### Native SwiftUI app
+### Interactive sessions
+
+The dashboard's **Sessions** panel drives real PTYs (via `node-pty`) owned by the daemon
+itself — `claude`, `codex`, or a plain shell — rendered client-side with xterm.js. Because
+the daemon (not the desktop shell) owns the process, sessions **survive closing the app**;
+they only die if the daemon itself is stopped, and are then marked `orphaned` on the next
+daemon start, with their transcript and resume info kept at
+`.agent-runs/studio-sessions/<id>/`. Any harness that can speak HTTP/WebSocket can drive
+the same API — this isn't Claude-Code-only.
+
+API surface (all under the dashboard server, `scripts/dfc-dashboard.ts` + `scripts/studio-sessions.ts`):
+
+| Endpoint | What it does |
+| --- | --- |
+| `GET/POST /api/repos`, `DELETE /api/repos/:id` | registered-repo registry (`~/.voidarch-studio/repos.json`) |
+| `GET/PUT /api/profiles` | provider profiles (`~/.voidarch-studio/providers.json`); built-ins: `claude-code`, `codex-cli`, `generic-shell` |
+| `GET/POST /api/sessions`, `GET/DELETE /api/sessions/:id` | list/launch/inspect/kill a session |
+| `POST /api/sessions/:id/input` \| `/signal` \| `/resize` \| `/respawn` | write to stdin, send SIGINT/SIGTERM/SIGKILL, resize the PTY, or relaunch (optionally with harness-native resume: `claude -c`, `codex resume --last`) |
+| `WebSocket /ws/sessions/:id` | live terminal stream (attach, input, resize) |
+| `POST /api/prompt/render` | render the shared task/context-pack/worktree prompt template |
+
+### Tauri desktop shell
 
 ```bash
-cd studio
-swift run VoidarchStudio     # macOS 14+, Apple Silicon primary
+cd studio-tauri
+pnpm tauri dev     # or: pnpm tauri build
 ```
 
-Hybrid shell ([`studio/README.md`](studio/README.md)): native SwiftUI owns orchestration (Tasks, Worktrees, Terminal via SwiftTerm PTY, Runs, Providers with launch profiles persisted to `~/.voidarch-studio/providers.json`), WKWebView panels reuse the daemon's dashboard pages until they go native. The daemon is the extended dashboard server above — start it first.
+A thin Tauri v2 shell ([`studio-tauri/`](studio-tauri/)): on launch it checks whether the
+daemon (the dashboard server above) is already up, spawns `pnpm dfc:dashboard` detached if
+not, waits for it to answer, then opens a native window pointed at
+`http://127.0.0.1:4949`. It never owns agent processes and never kills the daemon on exit
+— all orchestration state (sessions, worktrees, runs) lives in the daemon, so closing the
+window doesn't stop anything in flight.
 
 ### Feature flags
 
@@ -324,7 +352,7 @@ npx tsc --noEmit                 # typecheck everything
 bash scripts/dfc-validate-hooks.sh   # hook harness (39 checks)
 claude plugin validate .         # plugin manifest
 cd packages/voidarch-context && npm pack --dry-run   # package contents
-cd studio && swift build         # native app (macOS 14+, Xcode 26.6 verified)
+cd studio-tauri && pnpm tauri build   # native shell (thin; daemon owns orchestration)
 ```
 
 The `pnpm dfc:*` root scripts are thin aliases into `packages/voidarch-context/scripts/` and `scripts/`; the hook and skill layers call them, so they stay stable. Smoke-test the packed CLI end-to-end by installing the tarball into a scratch repo and running `init → ingest → search → context → remember → status → doctor → serve`.
@@ -348,7 +376,7 @@ This project was built as **dev-flow-control** (`dfc`), then split as **Nox / No
 ## Roadmap
 
 - **Voidarch Context:** more Tree-sitter grammars + call-graph edges in the built-in graph builder (today: TS/TSX/JS/Python), auto-embed on ingest + hybrid ranking, first-class Claude Code plugin package, memory sync/export between machines.
-- **Voidarch Studio:** module framework + subscription-first provider routing (tracked in issues), deeper native panels in the SwiftUI shell, context packs attached to agent runs, future MLX-powered local assistance.
+- **Voidarch Studio:** module framework + subscription-first provider routing (tracked in issues), context packs attached to agent runs, future MLX-powered local assistance.
 - **Validation:** live plugin-session testing across repos, and the efficiency benchmark (`templates/docs/efficiency-benchmark.md`) before any token-savings claim.
 
 ## License
