@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Voidarch Studio</title>
 <link rel="stylesheet" href="app.css">
+<link rel="stylesheet" href="vendor/xterm.css">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><circle cx='8' cy='8' r='7' fill='%237c5cff'/></svg>">
 </head>
 <body>
@@ -17,10 +18,14 @@
   </div>
   <div class="chips" id="chips"></div>
   <div class="head-actions">
+    <select id="repo-select" title="Active repo"><option value="">repo…</option></select>
     <select id="jump" title="Jump to panel">
       <option value="">Jump to…</option>
       <option value="control">Control Room</option>
       <option value="agents">Agents</option>
+      <option value="sessions">Sessions</option>
+      <option value="worktrees">Worktrees</option>
+      <option value="runs">Runs</option>
       <option value="workflows">Workflows</option>
       <option value="tasks">Tasks</option>
       <option value="codemap">Code Map</option>
@@ -152,6 +157,65 @@
     </div>
   </details>
 
+  <details class="panel" id="sessions" open>
+    <summary><span class="dot dot-teal"></span>Sessions<span class="hint" id="sessions-hint"></span></summary>
+    <div class="body">
+      <div class="launcher card">
+        <h3>Launch session <span class="dim">interactive agent process via the sessions daemon</span></h3>
+        <div class="tools-grid">
+          <label>Profile
+            <select id="sess-profile"><option value="">(unavailable)</option></select>
+          </label>
+          <label>Task
+            <select id="sess-task"><option value="">(none)</option></select>
+          </label>
+          <label>Worktree
+            <select id="sess-worktree"><option value="">(none)</option></select>
+          </label>
+          <label>Model
+            <input id="sess-model" type="text" placeholder="model">
+          </label>
+          <label>Effort
+            <input id="sess-effort" type="text" placeholder="effort">
+          </label>
+        </div>
+        <textarea id="sess-prompt" rows="3" placeholder="Prompt / task for the session…"></textarea>
+        <div class="launch-row">
+          <button id="sess-render" class="mini-btn">Render prompt spec</button>
+          <span id="sess-render-hash" class="dim mono"></span>
+          <button id="sess-launch" class="glow-btn">Launch ▸</button>
+          <span id="sess-launch-msg" class="dim"></span>
+        </div>
+      </div>
+      <div id="p-sessions"></div>
+      <div class="card" id="sess-terminal-card" hidden>
+        <h3>Terminal <span class="dim" id="sess-terminal-label"></span>
+          <button id="sess-detach" class="mini-btn" style="float:right">Detach</button></h3>
+        <div id="sess-term" class="term-container"></div>
+      </div>
+    </div>
+  </details>
+
+  <details class="panel" id="worktrees" open>
+    <summary><span class="dot dot-purple"></span>Worktrees<span class="hint" id="worktrees-hint"></span></summary>
+    <div class="body">
+      <div class="card">
+        <h3>Create worktree</h3>
+        <div class="launch-row">
+          <select id="wt-task"><option value="">Select task…</option></select>
+          <button id="wt-create" class="glow-btn">Create ▸</button>
+          <span id="wt-create-msg" class="dim"></span>
+        </div>
+      </div>
+      <div id="p-worktrees"></div>
+    </div>
+  </details>
+
+  <details class="panel" id="runs">
+    <summary><span class="dot dot-magenta"></span>Runs<span class="hint" id="runs-hint"></span></summary>
+    <div class="body" id="p-runs"></div>
+  </details>
+
   <details class="panel" id="workflows" open>
     <summary><span class="dot dot-purple"></span>Workflows<span class="hint" id="workflows-hint"></span></summary>
     <div class="body" id="p-workflows"></div>
@@ -238,6 +302,8 @@
   </form>
 </aside>
 
+<script src="vendor/xterm.js"></script>
+<script src="vendor/addon-fit.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
