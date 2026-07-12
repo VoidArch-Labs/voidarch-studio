@@ -2226,8 +2226,17 @@ async function main(): Promise<void> {
         else res.writeHead(404).end("not found");
       }
     } catch (err) {
-      sendJson(res, 500, { error: (err as Error).message });
+      const msg = (err as Error).message ?? String(err);
+      sendJson(res, msg.startsWith("unknown repo") ? 400 : 500, { error: msg });
     }
+  });
+
+  server.on("error", (err: NodeJS.ErrnoException) => {
+    if (err.code === "EADDRINUSE") {
+      console.error(`port ${port} already in use — another Studio daemon is likely running.`);
+      process.exit(0);
+    }
+    throw err;
   });
 
   initRepoRegistry(repoRoot);

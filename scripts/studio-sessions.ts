@@ -278,6 +278,9 @@ export function loadPersistedSessions(): void {
       if (meta.status === "running") {
         meta.status = "orphaned";
         meta.exitedAt = meta.exitedAt ?? new Date().toISOString();
+        // PTY children usually die with the daemon (SIGHUP on master close), but a
+        // child that ignores SIGHUP can outlive us — keep pid so kill/respawn can act.
+        if (!pidAlive(meta.pid)) meta.pid = undefined;
       }
       const live: LiveSession = { meta, buffer: [], bufferBytes: 0, sockets: new Set() };
       sessions.set(id, live);
@@ -311,6 +314,16 @@ export function sessionTail(id: string, maxBytes = 64 * 1024): string {
     return fd.subarray(Math.max(0, size - maxBytes)).toString("utf8");
   } catch {
     return "";
+  }
+}
+
+function pidAlive(pid: number | undefined): boolean {
+  if (!pid) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -448,7 +461,14 @@ export function resizeSession(id: string, cols: number, rows: number): boolean {
 
 export function signalSession(id: string, signal: "SIGINT" | "SIGTERM" | "SIGKILL"): boolean {
   const s = sessions.get(id);
-  if (!s?.pty) return false;
+  if (!s) return false;
+  if (!s.pty) {
+    // orphaned session whose child outlived a previous daemon: signal by recorded pid
+    if (s.meta.status !== "orphaned" || !pidAlive(s.meta.pid)) return false;
+    try { process.kill(s.meta.pid as number, signal === "SIGINT" ? "SIGINT" : signal); } catch { return false; }
+    if (signal !== "SIGINT") { s.meta.pid = undefined; persistMeta(s); }
+    return true;
+  }
   if (signal === "SIGINT") {
     s.pty.write("\x03"); // deliver as a keystroke so the TUI harness handles it natively
     return true;
@@ -468,6 +488,9 @@ export function respawnSession(id: string, opts: { resume?: boolean; prompt?: st
   const old = sessions.get(id);
   if (!old) throw new Error(`unknown session: ${id}`);
   if (old.pty) throw new Error("session still running; kill it first");
+  if (old.meta.status === "orphaned" && pidAlive(old.meta.pid)) {
+    throw new Error(`orphaned session process (pid ${old.meta.pid}) is still alive; kill it first`);
+  }
   const m = old.meta;
   return createSession({
     repoRoot: m.repoRoot, profileId: m.profileId, taskId: m.taskId, worktreeId: m.worktreeId,
