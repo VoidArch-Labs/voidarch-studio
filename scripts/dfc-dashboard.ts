@@ -2006,8 +2006,12 @@ async function main(): Promise<void> {
         sendJson(res, 200, reposPayload());
       } else if (url.pathname === "/api/repos" && req.method === "POST") {
         const body = JSON.parse((await readBody(req)) || "{}") as { root?: string };
-        const result = addRepo(String(body.root ?? ""));
-        sendJson(res, "error" in result ? 400 : 200, result);
+        if (!body.root) {
+          sendJson(res, 400, { error: "root (absolute path to a git repo) required" });
+        } else {
+          const result = addRepo(String(body.root));
+          sendJson(res, "error" in result ? 400 : 200, result);
+        }
       } else if (/^\/api\/repos\/[^/]+$/.test(url.pathname) && req.method === "DELETE") {
         const ok = removeRepo(decodeURIComponent(url.pathname.split("/")[3] ?? ""));
         sendJson(res, ok ? 200 : 404, ok ? { ok: true } : { error: "unknown repo" });
