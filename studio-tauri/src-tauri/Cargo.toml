@@ -1,5 +1,5 @@
 [package]
-name = "voidarch-studio"
+name = "app"
 version = "0.1.0"
 description = "Thin Tauri shell for the local Voidarch Studio daemon"
 authors = ["VoidArch Labs"]
