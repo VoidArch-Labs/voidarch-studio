@@ -3,8 +3,12 @@
   "version": "0.4.0",
   "private": true,
   "type": "module",
-  "description": "Voidarch Studio (agent orchestration control room) monorepo — ships @voidarch/context (packages/voidarch-context), the standalone repo memory/query/context-pack engine, plus the Studio dashboard, hooks, and Claude Code plugin. Legacy internal name: dev-flow-control (dfc).",
-  "license": "MIT",
+  "description": "VoidArch Studio agent-orchestration control room monorepo, including the Studio dashboard, daemon-owned sessions, safety hooks, Claude Code plugin, and an embedded @voidarch/context workspace copy.",
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/VoidArch-Labs/voidarch.git"
+  },
   "scripts": {
     "dfc:db:check": "tsx packages/voidarch-context/scripts/dfc-db-check.ts",
     "dfc:db:migrate": "tsx packages/voidarch-context/scripts/dfc-db-migrate.ts",
