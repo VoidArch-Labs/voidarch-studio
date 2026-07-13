@@ -1,6 +1,7 @@
 use std::fs::OpenOptions;
 use std::io::{Read, Write};
 use std::net::TcpStream;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
@@ -11,8 +12,6 @@ const DAEMON_URL: &str = "http://127.0.0.1:4949";
 const POLL_TIMEOUT: Duration = Duration::from_secs(20);
 const POLL_INTERVAL: Duration = Duration::from_millis(500);
 
-// ponytail: hand-rolled TCP probe instead of an HTTP client dependency — this only
-// needs "did something answer on the socket", not real response parsing.
 fn daemon_is_up() -> bool {
     let addr = match DAEMON_HOST.parse() {
         Ok(a) => a,
@@ -34,30 +33,68 @@ fn daemon_is_up() -> bool {
     }
 }
 
-fn studio_root() -> String {
-    std::env::var("VOIDARCH_STUDIO_ROOT")
-        .unwrap_or_else(|_| "/Users/davidpapp/Dev/Claude_Workflow_Plugin/dev-flow-control".into())
+fn is_studio_root(path: &Path) -> bool {
+    let package = path.join("package.json");
+    std::fs::read_to_string(package)
+        .map(|text| text.contains("\"name\": \"voidarch-studio\""))
+        .unwrap_or(false)
 }
 
-// Spawns the daemon detached from this process; we never kill it, so it survives app exit.
+fn find_studio_root() -> std::io::Result<PathBuf> {
+    if let Ok(configured) = std::env::var("VOIDARCH_STUDIO_ROOT") {
+        let path = PathBuf::from(configured);
+        if is_studio_root(&path) {
+            return Ok(path);
+        }
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "VOIDARCH_STUDIO_ROOT does not point to a Voidarch Studio checkout",
+        ));
+    }
+
+    if let Ok(cwd) = std::env::current_dir() {
+        for candidate in cwd.ancestors() {
+            if is_studio_root(candidate) {
+                return Ok(candidate.to_path_buf());
+            }
+        }
+    }
+
+    if let Ok(executable) = std::env::current_exe() {
+        for candidate in executable.ancestors() {
+            if is_studio_root(candidate) {
+                return Ok(candidate.to_path_buf());
+            }
+        }
+    }
+
+    Err(std::io::Error::new(
+        std::io::ErrorKind::NotFound,
+        "Voidarch Studio checkout not found; set VOIDARCH_STUDIO_ROOT or start the daemon manually",
+    ))
+}
+
 fn spawn_daemon() -> std::io::Result<()> {
     let log_dir = dirs_home().join(".voidarch-studio");
     std::fs::create_dir_all(&log_dir)?;
     let log_path = log_dir.join("daemon.log");
     let log_out = OpenOptions::new().create(true).append(true).open(&log_path)?;
     let log_err = log_out.try_clone()?;
+    let root = find_studio_root()?;
 
     Command::new("pnpm")
         .args(["dfc:dashboard"])
-        .current_dir(studio_root())
+        .current_dir(root)
         .stdout(Stdio::from(log_out))
         .stderr(Stdio::from(log_err))
         .spawn()?;
     Ok(())
 }
 
-fn dirs_home() -> std::path::PathBuf {
-    std::env::var("HOME").map(std::path::PathBuf::from).unwrap_or_else(|_| "/tmp".into())
+fn dirs_home() -> PathBuf {
+    std::env::var("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("/tmp"))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -75,8 +112,8 @@ pub fn run() {
             let handle = app.handle().clone();
             std::thread::spawn(move || {
                 if !daemon_is_up() {
-                    if let Err(e) = spawn_daemon() {
-                        log::error!("failed to spawn Voidarch Studio daemon: {e}");
+                    if let Err(error) = spawn_daemon() {
+                        log::error!("failed to spawn Voidarch Studio daemon: {error}");
                     }
                 }
 
@@ -105,4 +142,21 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_studio_root;
+    use std::fs;
+
+    #[test]
+    fn recognises_a_voidarch_studio_checkout() {
+        let root = std::env::temp_dir().join(format!("voidarch-studio-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).expect("create temp checkout");
+        fs::write(root.join("package.json"), r#"{"name": "voidarch-studio"}"#)
+            .expect("write package manifest");
+        assert!(is_studio_root(&root));
+        fs::remove_dir_all(root).expect("remove temp checkout");
+    }
 }
