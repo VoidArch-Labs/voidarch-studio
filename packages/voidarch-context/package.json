@@ -2,8 +2,8 @@
   "name": "@voidarch/context",
   "version": "0.1.0",
   "type": "module",
-  "description": "Voidarch Context — drop-in local repo memory, query, and context-pack engine for AI coding agents. Local embeddings, embedded DB, no API key required.",
-  "license": "MIT",
+  "description": "VoidArch Context workspace copy embedded in VoidArch Studio for local repo memory, query, and context-pack functionality.",
+  "license": "UNLICENSED",
   "bin": {
     "voidarch-context": "./bin/voidarch-context.js"
   },

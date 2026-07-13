@@ -1,8 +1,8 @@
-# Voidarch Studio
+# VoidArch Studio
 
 **Local-first orchestration, observability and safety controls for AI coding agents.**
 
-Voidarch Studio is an active-development control room for running and supervising coding agents across repositories, worktrees and interactive terminal sessions. It combines a localhost dashboard, a daemon-owned PTY session engine, deterministic safety hooks, workflow templates, observability records and a thin Tauri desktop shell.
+VoidArch Studio is an active-development control room for running and supervising coding agents across repositories, worktrees and interactive terminal sessions. It combines a localhost dashboard, a daemon-owned PTY session engine, deterministic safety hooks, workflow templates, observability records and a thin Tauri desktop shell.
 
 > **Status:** substantial working prototype in active development. The repository is suitable as an engineering reference, but it is not distributed as a stable desktop release.
 
@@ -10,8 +10,8 @@ Voidarch Studio is an active-development control room for running and supervisin
 
 This monorepo contains two related layers:
 
-- **[Voidarch Context](packages/voidarch-context/README.md)** indexes, remembers, searches and assembles repository context. It is independently usable and is also maintained in the standalone `VoidArch-Labs/voidarch-context` repository.
-- **Voidarch Studio** launches, routes, observes and controls coding-agent sessions. Studio uses Context, while Context does not require Studio.
+- **[VoidArch Context](packages/voidarch-context/README.md)** indexes, remembers, searches and assembles repository context. It is independently usable and is also maintained in the standalone `VoidArch-Labs/voidarch-context` repository.
+- **VoidArch Studio** launches, routes, observes and controls coding-agent sessions. Studio uses Context, while Context does not require Studio.
 
 ## Implemented
 
@@ -56,7 +56,7 @@ The shell accepts `VOIDARCH_STUDIO_ROOT=/path/to/voidarch`. It no longer depends
 
 ## Verification
 
-GitHub Actions separates public-readiness verification into three independent jobs:
+The workflow at [`.github/workflows/typecheck.yml`](.github/workflows/typecheck.yml) defines three independent verification jobs:
 
 1. **TypeScript and safety hooks**
    - frozen workspace install;
@@ -73,8 +73,6 @@ GitHub Actions separates public-readiness verification into three independent jo
 3. **Tauri shell**
    - Rust tests;
    - Linux native-shell compilation through Tauri.
-
-Workflow: [`.github/workflows/typecheck.yml`](.github/workflows/typecheck.yml)
 
 ## Run the dashboard
 
@@ -143,8 +141,8 @@ docs/                        architecture, operation and validation documents
 
 ## Context package
 
-The included workspace package is documented at [`packages/voidarch-context/README.md`](packages/voidarch-context/README.md). The standalone reference repository is `VoidArch-Labs/voidarch-context`.
+The included workspace package is documented at [`packages/voidarch-context/README.md`](packages/voidarch-context/README.md). The separate public `VoidArch-Labs/voidarch-context` repository remains available under the MIT License; this embedded workspace copy is governed by this repository's proprietary license.
 
 ## License
 
-MIT
+Copyright (c) 2026 VoidArch Labs. All Rights Reserved. See [`LICENSE`](LICENSE).

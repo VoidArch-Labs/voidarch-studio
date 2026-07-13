@@ -1,8 +1,8 @@
-# Voidarch Context
+# VoidArch Context
 
 **Local-first repo memory, search, code-graph and context-pack engine for AI coding agents.**
 
-Voidarch Context gives Claude Code, Codex and other coding agents persistent per-repository context without requiring a hosted service. It indexes source and documentation, stores durable memories and task state, builds a lightweight code graph, and assembles ranked context packs under an explicit token budget.
+VoidArch Context gives Claude Code, Codex and other coding agents persistent per-repository context without requiring a hosted service. It indexes source and documentation, stores durable memories and task state, builds a lightweight code graph, and assembles ranked context packs under an explicit token budget.
 
 > **Status:** active development, version `0.1.0`. The standalone repository is configured to verify the CLI surface from a packed consumer install. The project is not yet published as a stable npm release.
 
@@ -115,4 +115,6 @@ Task query ──> ranking and neighborhood retrieval ──> token-budgeted con
 
 ## License
 
-MIT
+This workspace copy is proprietary and governed by the root [`LICENSE`](../../LICENSE): Copyright (c) 2026 VoidArch Labs. All Rights Reserved.
+
+The separate [`VoidArch-Labs/voidarch-context`](https://github.com/VoidArch-Labs/voidarch-context) repository remains licensed under MIT.

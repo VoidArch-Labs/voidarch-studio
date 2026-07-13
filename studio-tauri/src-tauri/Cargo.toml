@@ -1,9 +1,9 @@
 [package]
 name = "app"
 version = "0.1.0"
-description = "Thin Tauri shell for the local Voidarch Studio daemon"
+description = "Thin Tauri shell for the local VoidArch Studio daemon"
 authors = ["VoidArch Labs"]
-license = "MIT"
+license-file = "../../LICENSE"
 repository = "https://github.com/VoidArch-Labs/voidarch"
 edition = "2021"
 rust-version = "1.77.2"
