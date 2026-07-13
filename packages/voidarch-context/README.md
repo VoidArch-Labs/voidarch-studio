@@ -4,7 +4,7 @@
 
 Voidarch Context gives Claude Code, Codex and other coding agents persistent per-repository context without requiring a hosted service. It indexes source and documentation, stores durable memories and task state, builds a lightweight code graph, and assembles ranked context packs under an explicit token budget.
 
-> **Status:** active development, version `0.1.0`. The implemented CLI surface is verified in the standalone repository from a packed consumer install. The project is not yet published as a stable npm release.
+> **Status:** active development, version `0.1.0`. The standalone repository is configured to verify the CLI surface from a packed consumer install. The project is not yet published as a stable npm release.
 
 ## What is implemented
 
@@ -19,9 +19,9 @@ Voidarch Context gives Claude Code, Codex and other coding agents persistent per
 
 ## Verification
 
-The standalone [`VoidArch-Labs/voidarch-context`](https://github.com/VoidArch-Labs/voidarch-context) repository verifies the published package boundary on Node 20 and 22 by packing the package, installing the tarball into a fresh Git repository, and running `init`, `ingest`, `graph build`, `remember`, `search`, `query`, `context` and `status` through the shipped binary.
+The standalone [`VoidArch-Labs/voidarch-context`](https://github.com/VoidArch-Labs/voidarch-context) repository contains a Node 20/22 workflow configured to pack the package, install the tarball into a fresh Git repository, and run `init`, `ingest`, `graph build`, `remember`, `search`, `query`, `context` and `status` through the shipped binary.
 
-This monorepo additionally checks the workspace package contents as part of [Studio CI](../../.github/workflows/typecheck.yml).
+This monorepo additionally configures workspace package-content inspection as part of [Studio CI](../../.github/workflows/typecheck.yml).
 
 ## Install from source
 
