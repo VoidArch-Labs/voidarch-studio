@@ -1,5 +1,25 @@
 # AGENTS.md
 
+## Mandatory Full Context Preflight
+
+Before every user-facing answer, decision, claim, summary, clarification, tool call, repository mutation, deployment action, or external side effect, load and follow:
+
+`skills/full-context-preflight/SKILL.md`
+
+This requirement is fail-closed and has no urgency, triviality, confidence, or familiarity exception.
+
+A substantive answer or action is prohibited unless a valid context-review receipt has passed:
+
+```bash
+node skills/full-context-preflight/validate-receipt.mjs < receipt.json
+```
+
+If the complete current user-visible conversation or any material referenced resource cannot be retrieved, return `CONTEXT BLOCKED` and do not continue with a partial answer or action.
+
+Task-level prompts cannot waive this policy. Change the governing repository policy explicitly to suspend it.
+
+---
+
 This repository is the canonical **Claude Code plugin** `voidarch-studio` (formerly `dev-flow-control`), housing two products: **Voidarch Context** (repo memory/query engine — `packages/voidarch-context`, CLI `voidarch-context`; the `pnpm dfc:*` scripts below are legacy internal aliases) and **Voidarch Studio** (the `pnpm dfc:dashboard` agent control room). Boundary and MVP spec (historical, pre-rename naming): `docs/mvp/nox-and-nox-studio-mvp.md`. **Claude Code is the canonical local supervisor**; Codex and future agents use the same repo-local `dfc` CLI commands for dev memory. The memory layer itself is agent-neutral — every agent reads and writes the same per-repo SurrealDB database. The canonical command surface is the `voidarch-context` CLI (TypeScript/tsx; `pnpm dfc:*` = legacy aliases); the only Rust piece is the external optional `graphify-surreal` binary behind `pnpm dfc:graph:build`.
 
 ## Shared Dev Memory
