@@ -86,7 +86,7 @@ Requirements:
 
 ```bash
 git clone https://github.com/VoidArch-Labs/voidarch-studio.git
-cd voidarch
+cd voidarch-studio
 pnpm install --frozen-lockfile
 pnpm typecheck
 pnpm dfc:validate-hooks
