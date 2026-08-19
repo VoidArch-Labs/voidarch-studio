@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@voidarch/context':
-        specifier: git+https://github.com/VoidArch-Labs/voidarch-context.git#7263687ac8f56b5126db83f8d435e4ec6fce090a
-        version: https://codeload.github.com/VoidArch-Labs/voidarch-context/tar.gz/7263687ac8f56b5126db83f8d435e4ec6fce090a(tslib@2.8.1)(typescript@5.9.3)
+        specifier: git+https://github.com/VoidArch-Labs/voidarch-context.git#82fbf7c3720295e01b69fd78f19fc38b808eefae
+        version: https://codeload.github.com/VoidArch-Labs/voidarch-context/tar.gz/82fbf7c3720295e01b69fd78f19fc38b808eefae(tslib@2.8.1)(typescript@5.9.3)
       node-pty:
         specifier: ^1.1.0
         version: 1.1.0
@@ -390,8 +390,8 @@ packages:
   '@types/ws@8.18.1':
     resolution: {integrity: sha512-ThVF6DCVhA8kUGy+aazFQ4kXQ7E1Ty7A3ypFOe0IcJV8O/M511G99AW24irKrW56Wt44yG9+ij8FaqoBGkuBXg==}
 
-  '@voidarch/context@https://codeload.github.com/VoidArch-Labs/voidarch-context/tar.gz/7263687ac8f56b5126db83f8d435e4ec6fce090a':
-    resolution: {tarball: https://codeload.github.com/VoidArch-Labs/voidarch-context/tar.gz/7263687ac8f56b5126db83f8d435e4ec6fce090a}
+  '@voidarch/context@https://codeload.github.com/VoidArch-Labs/voidarch-context/tar.gz/82fbf7c3720295e01b69fd78f19fc38b808eefae':
+    resolution: {tarball: https://codeload.github.com/VoidArch-Labs/voidarch-context/tar.gz/82fbf7c3720295e01b69fd78f19fc38b808eefae}
     version: 0.1.0
     hasBin: true
 
@@ -809,7 +809,7 @@ snapshots:
     dependencies:
       '@types/node': 22.20.0
 
-  '@voidarch/context@https://codeload.github.com/VoidArch-Labs/voidarch-context/tar.gz/7263687ac8f56b5126db83f8d435e4ec6fce090a(tslib@2.8.1)(typescript@5.9.3)':
+  '@voidarch/context@https://codeload.github.com/VoidArch-Labs/voidarch-context/tar.gz/82fbf7c3720295e01b69fd78f19fc38b808eefae(tslib@2.8.1)(typescript@5.9.3)':
     dependencies:
       '@huggingface/transformers': 4.2.0
       '@surrealdb/node': 3.0.3(surrealdb@2.0.4(tslib@2.8.1)(typescript@5.9.3))

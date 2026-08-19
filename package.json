@@ -42,7 +42,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@voidarch/context": "git+https://github.com/VoidArch-Labs/voidarch-context.git#7263687ac8f56b5126db83f8d435e4ec6fce090a",
+    "@voidarch/context": "git+https://github.com/VoidArch-Labs/voidarch-context.git#82fbf7c3720295e01b69fd78f19fc38b808eefae",
     "node-pty": "^1.1.0",
     "surrealdb": "^2.0.4",
     "ws": "^8.21.0"
