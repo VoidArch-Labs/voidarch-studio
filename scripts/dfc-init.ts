@@ -41,7 +41,7 @@ function main(): void {
   if (targetRoot === STUDIO_ROOT) {
     console.error(
       "dfc:init targets another repository. Pass --repo-root /path/to/repo " +
-        "(or set DFC_TARGET_STUDIO_ROOT / run from inside the target repo).",
+        "(or set DFC_TARGET_REPO_ROOT / run from inside the target repo).",
     );
     process.exit(2);
   }

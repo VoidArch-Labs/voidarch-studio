@@ -81,8 +81,8 @@ function resolveTargetRepoRoot(args: Args, fileEnv: Record<string, string>): str
   // at the plugin's own directory instead of the project actually being worked on.
   const raw =
     args["repo-root"] ||
-    process.env.DFC_TARGET_STUDIO_ROOT ||
-    fileEnv.DFC_TARGET_STUDIO_ROOT ||
+    process.env.DFC_TARGET_REPO_ROOT ||
+    fileEnv.DFC_TARGET_REPO_ROOT ||
     process.env.CLAUDE_PROJECT_DIR ||
     process.cwd();
   return resolve(raw);
