@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@voidarch/context':
-        specifier: workspace:*
-        version: link:packages/voidarch-context
+        specifier: git+https://github.com/VoidArch-Labs/voidarch-context.git#7263687ac8f56b5126db83f8d435e4ec6fce090a
+        version: https://codeload.github.com/VoidArch-Labs/voidarch-context/tar.gz/7263687ac8f56b5126db83f8d435e4ec6fce090a(tslib@2.8.1)(typescript@5.9.3)
       node-pty:
         specifier: ^1.1.0
         version: 1.1.0
@@ -30,34 +30,6 @@ importers:
       tsx:
         specifier: ^4.22.4
         version: 4.22.4
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-
-  packages/voidarch-context:
-    dependencies:
-      '@huggingface/transformers':
-        specifier: ^4.2.0
-        version: 4.2.0
-      '@surrealdb/node':
-        specifier: ^3.0.3
-        version: 3.0.3(surrealdb@2.0.4(tslib@2.8.1)(typescript@5.9.3))
-      surrealdb:
-        specifier: ^2.0.4
-        version: 2.0.4(tslib@2.8.1)(typescript@5.9.3)
-      tree-sitter-wasms:
-        specifier: ^0.1.13
-        version: 0.1.13
-      tsx:
-        specifier: ^4.22.4
-        version: 4.22.4
-      web-tree-sitter:
-        specifier: ^0.24.7
-        version: 0.24.7
-    devDependencies:
-      '@types/node':
-        specifier: ^22.10.0
-        version: 22.20.0
       typescript:
         specifier: ^5.7.0
         version: 5.9.3
@@ -417,6 +389,11 @@ packages:
 
   '@types/ws@8.18.1':
     resolution: {integrity: sha512-ThVF6DCVhA8kUGy+aazFQ4kXQ7E1Ty7A3ypFOe0IcJV8O/M511G99AW24irKrW56Wt44yG9+ij8FaqoBGkuBXg==}
+
+  '@voidarch/context@https://codeload.github.com/VoidArch-Labs/voidarch-context/tar.gz/7263687ac8f56b5126db83f8d435e4ec6fce090a':
+    resolution: {tarball: https://codeload.github.com/VoidArch-Labs/voidarch-context/tar.gz/7263687ac8f56b5126db83f8d435e4ec6fce090a}
+    version: 0.1.0
+    hasBin: true
 
   adm-zip@0.5.18:
     resolution: {integrity: sha512-ufJnssQGbxzLNS1Ho9bCtX4rQKCCvoVuDLHoJyc3F9dOGDB4BkWs2Ci0kv53lqocAEQ/Cbi+I2XCsNYGqVYqng==}
@@ -831,6 +808,18 @@ snapshots:
   '@types/ws@8.18.1':
     dependencies:
       '@types/node': 22.20.0
+
+  '@voidarch/context@https://codeload.github.com/VoidArch-Labs/voidarch-context/tar.gz/7263687ac8f56b5126db83f8d435e4ec6fce090a(tslib@2.8.1)(typescript@5.9.3)':
+    dependencies:
+      '@huggingface/transformers': 4.2.0
+      '@surrealdb/node': 3.0.3(surrealdb@2.0.4(tslib@2.8.1)(typescript@5.9.3))
+      surrealdb: 2.0.4(tslib@2.8.1)(typescript@5.9.3)
+      tree-sitter-wasms: 0.1.13
+      tsx: 4.22.4
+      web-tree-sitter: 0.24.7
+    transitivePeerDependencies:
+      - tslib
+      - typescript
 
   adm-zip@0.5.18: {}
 

@@ -30,9 +30,6 @@ jobs:
         run: pnpm typecheck
       - name: Run deterministic hook harness
         run: pnpm dfc:validate-hooks
-      - name: Verify Context package contents
-        working-directory: packages/voidarch-context
-        run: npm pack --dry-run
 
   studio-gui:
     name: Daemon and Chromium GUI

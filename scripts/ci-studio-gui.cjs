@@ -53,11 +53,6 @@ const screenshotPath = process.env.STUDIO_SCREENSHOT || "artifacts/studio-smoke.
       body: JSON.stringify({ task: "verify Studio public readiness", contextPack: "safe context" }),
     });
     const prompt = await promptResponse.json();
-    const invalidRepoResponse = await fetch("/api/repos", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({}),
-    });
     return {
       stateStatus: stateResponse.status,
       state,
@@ -67,7 +62,6 @@ const screenshotPath = process.env.STUDIO_SCREENSHOT || "artifacts/studio-smoke.
       sessions,
       promptStatus: promptResponse.status,
       prompt,
-      invalidRepoStatus: invalidRepoResponse.status,
     };
   });
 
@@ -75,7 +69,14 @@ const screenshotPath = process.env.STUDIO_SCREENSHOT || "artifacts/studio-smoke.
   assert.equal(api.reposStatus, 200);
   assert.equal(api.sessionsStatus, 200);
   assert.equal(api.promptStatus, 200);
-  assert.equal(api.invalidRepoStatus, 400, "missing repository root must be rejected");
+  const invalidRepoResponse = await page.request.post(`${baseUrl}/api/repos`, { data: {} });
+  assert.equal(invalidRepoResponse.status(), 400, "missing repository root must be rejected");
+  const invalidSessionResponse = await page.request.post(`${baseUrl}/api/sessions`, {
+    data: { profileId: "__voidarch_ci_missing_profile__" },
+  });
+  assert.equal(invalidSessionResponse.status(), 400, "unknown session profile must be rejected without launching an agent");
+  const missingSessionResponse = await page.request.get(`${baseUrl}/api/sessions/__voidarch_ci_missing_session__`);
+  assert.equal(missingSessionResponse.status(), 404, "unknown session lookup must return 404");
   assert.equal(typeof api.state.repo?.root, "string", "state payload is missing repo.root");
   assert(Array.isArray(api.state.health), "state payload is missing health checks");
   assert(Array.isArray(api.state.sessions), "state payload is missing hooked sessions");

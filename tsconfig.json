@@ -1,7 +1,9 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "lib": ["ES2022"],
+    "lib": [
+      "ES2022"
+    ],
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "strict": true,
@@ -11,7 +13,12 @@
     "resolveJsonModule": true,
     "verbatimModuleSyntax": true,
     "noEmit": true,
-    "types": ["node"]
+    "types": [
+      "node"
+    ]
   },
-  "include": ["src/**/*.ts", "scripts/**/*.ts", "packages/voidarch-context/src/**/*.ts", "packages/voidarch-context/scripts/**/*.ts"]
+  "include": [
+    "src/**/*.ts",
+    "scripts/**/*.ts"
+  ]
 }
