@@ -19,10 +19,10 @@ import { homedir } from "node:os";
 import { createServer } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { basename, dirname, extname, join, normalize } from "node:path";
+import { fileURLToPath } from "node:url";
 import { parseArgs, repoRootFromArgs } from "@voidarch/context/cli";
 import { type DfcMetrics, collectMetrics } from "@voidarch/context/metrics";
 import {
-  REPO_ROOT,
   embeddedDataDir,
   isEmbeddedUrl,
   loadConfig,
@@ -43,6 +43,8 @@ import {
 } from "./studio-sessions.js";
 
 // Short timeouts for an interactive dashboard (only if the user has not overridden).
+const STUDIO_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
+
 process.env.DFC_SURREAL_CONNECT_TIMEOUT_MS ??= "8000";
 process.env.DFC_SURREAL_CONNECT_ATTEMPTS ??= "1";
 process.env.DFC_SURREAL_QUERY_TIMEOUT_MS ??= "15000";
@@ -470,7 +472,7 @@ async function finishStudioRun(
 
 function collectHealth(repoRoot: string): Health[] {
   const checks: Health[] = [];
-  const manifestPath = join(REPO_ROOT, ".claude-plugin", "plugin.json");
+  const manifestPath = join(STUDIO_ROOT, ".claude-plugin", "plugin.json");
   const manifest = readJson(manifestPath) as { name?: string; version?: string } | undefined;
   checks.push(
     manifest?.name
@@ -478,7 +480,7 @@ function collectHealth(repoRoot: string): Health[] {
       : { name: "Plugin manifest", status: "fail", detail: `unreadable: ${manifestPath}` },
   );
 
-  const hooksJson = readJson(join(REPO_ROOT, "hooks", "hooks.json")) as
+  const hooksJson = readJson(join(STUDIO_ROOT, "hooks", "hooks.json")) as
     | { hooks?: Record<string, Array<{ hooks?: Array<{ command?: string }> }>> }
     | undefined;
   if (!hooksJson?.hooks) {
@@ -491,7 +493,7 @@ function collectHealth(repoRoot: string): Health[] {
     const missing = commands
       .map((c) => /\$\{CLAUDE_PLUGIN_ROOT\}\/(\S+?)"/.exec(c)?.[1])
       .filter((rel): rel is string => Boolean(rel))
-      .filter((rel) => !existsSync(join(REPO_ROOT, rel)));
+      .filter((rel) => !existsSync(join(STUDIO_ROOT, rel)));
     checks.push(
       missing.length
         ? { name: "Hooks", status: "fail", detail: `missing scripts: ${missing.join(", ")}` }
@@ -506,13 +508,13 @@ function collectHealth(repoRoot: string): Health[] {
     checks.push({ name: "jq (hooks parser)", status: "warn", detail: "missing — security hooks fail closed" });
   }
 
-  const skills = existsSync(join(REPO_ROOT, "skills"))
-    ? readdirSync(join(REPO_ROOT, "skills")).filter((d) => existsSync(join(REPO_ROOT, "skills", d, "SKILL.md")))
+  const skills = existsSync(join(STUDIO_ROOT, "skills"))
+    ? readdirSync(join(STUDIO_ROOT, "skills")).filter((d) => existsSync(join(STUDIO_ROOT, "skills", d, "SKILL.md")))
     : [];
   checks.push({ name: "Skills", status: skills.length ? "ok" : "warn", detail: `${skills.length} bundled` });
 
-  const agents = existsSync(join(REPO_ROOT, "agents"))
-    ? readdirSync(join(REPO_ROOT, "agents")).filter((f) => f.endsWith(".md"))
+  const agents = existsSync(join(STUDIO_ROOT, "agents"))
+    ? readdirSync(join(STUDIO_ROOT, "agents")).filter((f) => f.endsWith(".md"))
     : [];
   checks.push({ name: "Agents", status: agents.length ? "ok" : "warn", detail: `${agents.length} bundled` });
 
@@ -656,7 +658,7 @@ function parseWorkflowMeta(path: string, source: string): WorkflowInfo | undefin
 function collectWorkflows(repoRoot: string): WorkflowInfo[] {
   const out: WorkflowInfo[] = [];
   const dirs = [
-    { dir: join(REPO_ROOT, "workflows"), source: "plugin" },
+    { dir: join(STUDIO_ROOT, "workflows"), source: "plugin" },
     { dir: join(repoRoot, ".claude", "workflows"), source: "repo" },
   ];
   const seen = new Set<string>();
@@ -685,7 +687,7 @@ function collectSync(repoRoot: string): Record<string, unknown> {
   }
   // Hosted target on file: a wss:// URL in any .dfc env file means dfc:sync has somewhere to go.
   const hostedConfigured = [".dfc/surreal.env", ".dfc/surreal.hosted.env"]
-    .flatMap((rel) => [join(repoRoot, rel), join(REPO_ROOT, rel)])
+    .flatMap((rel) => [join(repoRoot, rel), join(STUDIO_ROOT, rel)])
     .some((p) => /^DFC_SURREAL_URL=wss?:\/\//m.test(existsSync(p) ? readFileSync(p, "utf8") : ""));
   return {
     mode: embedded ? "embedded" : "hosted",
@@ -1038,7 +1040,7 @@ interface NoxDefaults {
 
 function loadNoxDefaults(repoRoot: string): NoxDefaults {
   const fileEnv = {
-    ...parseEnvFile(join(REPO_ROOT, ".dfc", "nox.env")),
+    ...parseEnvFile(join(STUDIO_ROOT, ".dfc", "nox.env")),
     ...parseEnvFile(join(repoRoot, ".dfc", "nox.env")),
   };
   const get = (k: string, d: string): string => (process.env[k] ?? fileEnv[k] ?? d).trim() || d;
@@ -1612,7 +1614,7 @@ interface MercuryConfig {
 
 function loadMercuryConfig(repoRoot: string): MercuryConfig {
   const fileEnv = {
-    ...parseEnvFile(join(REPO_ROOT, ".dfc", "mercury.env")),
+    ...parseEnvFile(join(STUDIO_ROOT, ".dfc", "mercury.env")),
     ...parseEnvFile(join(repoRoot, ".dfc", "mercury.env")),
   };
   const get = (k: string): string => (process.env[k] ?? fileEnv[k] ?? "").trim();
@@ -1892,7 +1894,7 @@ async function buildState(repoRoot: string, fresh: boolean): Promise<Record<stri
       root: repoRoot,
       repo_id: cfg.repoId,
       database: cfg.database,
-      plugin_root: REPO_ROOT,
+      plugin_root: STUDIO_ROOT,
       branch: git(repoRoot, "rev-parse", "--abbrev-ref", "HEAD") || "(not a git repo)",
       head: git(repoRoot, "log", "-1", "--format=%h %s"),
       dirty_files: dirty ? dirty.split("\n").length : 0,
@@ -1958,7 +1960,7 @@ async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const repoRoot = repoRootFromArgs(args);
   const port = Number.parseInt(args.port || process.env.DFC_DASHBOARD_PORT || "4949", 10);
-  const uiDir = join(REPO_ROOT, "dashboard");
+  const uiDir = join(STUDIO_ROOT, "dashboard");
 
   const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");

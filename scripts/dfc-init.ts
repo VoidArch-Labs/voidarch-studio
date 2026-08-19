@@ -6,9 +6,12 @@
 // --copy-credentials is passed explicitly.
 
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import { dirname, basename, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { parseArgs, repoRootFromArgs } from "@voidarch/context/cli";
-import { REPO_ROOT, isEmbeddedUrl, parseEnvFile } from "@voidarch/context/surreal";
+import { isEmbeddedUrl, parseEnvFile } from "@voidarch/context/surreal";
+
+const STUDIO_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 
 const GITIGNORE_LINES = [
   ".dfc/*.env",
@@ -35,10 +38,10 @@ function main(): void {
   const targetRoot = repoRootFromArgs(args);
   const force = args.force === "true";
 
-  if (targetRoot === REPO_ROOT) {
+  if (targetRoot === STUDIO_ROOT) {
     console.error(
       "dfc:init targets another repository. Pass --repo-root /path/to/repo " +
-        "(or set DFC_TARGET_REPO_ROOT / run from inside the target repo).",
+        "(or set DFC_TARGET_STUDIO_ROOT / run from inside the target repo).",
     );
     process.exit(2);
   }
@@ -54,7 +57,7 @@ function main(): void {
   // 1. .dfc/ with per-repo identity baked into the committed template.
   const targetDfc = join(targetRoot, ".dfc");
   mkdirSync(targetDfc, { recursive: true });
-  const surrealTemplate = join(REPO_ROOT, ".dfc", "surreal.example.env");
+  const surrealTemplate = join(STUDIO_ROOT, ".dfc", "surreal.example.env");
   const surrealOut = join(targetDfc, "surreal.example.env");
   if (existsSync(surrealOut) && !force) {
     skipped.push(".dfc/surreal.example.env (exists; --force to overwrite)");
@@ -62,7 +65,7 @@ function main(): void {
     writeFileSync(surrealOut, rewriteRepoIdentity(readFileSync(surrealTemplate, "utf8"), repoId));
     done.push(`.dfc/surreal.example.env (DFC_REPO_ID=${repoId}, DFC_SURREAL_DB=repo_${repoId.replace(/-/g, "_")})`);
   }
-  const embedTemplate = join(REPO_ROOT, ".dfc", "embed.example.env");
+  const embedTemplate = join(STUDIO_ROOT, ".dfc", "embed.example.env");
   const embedOut = join(targetDfc, "embed.example.env");
   if (existsSync(embedOut) && !force) {
     skipped.push(".dfc/embed.example.env (exists)");
@@ -77,9 +80,9 @@ function main(): void {
     // "Copy credentials" means the plugin's HOSTED instance. The plugin's own
     // surreal.env may point at its local embedded DB, so prefer the first env
     // file that actually carries hosted (non-embedded) connection values.
-    let pluginEnv = parseEnvFile(join(REPO_ROOT, ".dfc", "surreal.env"));
+    let pluginEnv = parseEnvFile(join(STUDIO_ROOT, ".dfc", "surreal.env"));
     if (!pluginEnv.DFC_SURREAL_URL || isEmbeddedUrl(pluginEnv.DFC_SURREAL_URL)) {
-      pluginEnv = parseEnvFile(join(REPO_ROOT, ".dfc", "surreal.hosted.env"));
+      pluginEnv = parseEnvFile(join(STUDIO_ROOT, ".dfc", "surreal.hosted.env"));
     }
     const surrealEnvOut = join(targetDfc, "surreal.env");
     if (!pluginEnv.DFC_SURREAL_URL || isEmbeddedUrl(pluginEnv.DFC_SURREAL_URL)) {
@@ -117,7 +120,7 @@ function main(): void {
 
   // 4. Workflow-tool scripts → <target>/.claude/workflows/ (skip with --no-workflows).
   if (args["no-workflows"] !== "true") {
-    const wfSrc = join(REPO_ROOT, "workflows");
+    const wfSrc = join(STUDIO_ROOT, "workflows");
     if (existsSync(wfSrc)) {
       const wfDst = join(targetRoot, ".claude", "workflows");
       mkdirSync(wfDst, { recursive: true });
@@ -143,7 +146,7 @@ function main(): void {
     if (existsSync(out) && !force) {
       skipped.push(`${outName} (exists; merge manually from templates/${template})`);
     } else {
-      copyFileSync(join(REPO_ROOT, "templates", template), out);
+      copyFileSync(join(STUDIO_ROOT, "templates", template), out);
       done.push(outName);
     }
   }
@@ -155,11 +158,11 @@ function main(): void {
 Next steps (default = embedded SurrealKV at ${join(targetRoot, ".dfc/dev-memory")} — no credentials needed):
   1. Hosted instead? Create ${join(targetRoot, ".dfc/surreal.env")} from the example's wss:// block
      (or rerun with --copy-credentials to reuse the plugin's hosted instance with a per-repo DB).
-  2. Verify:   pnpm --dir ${REPO_ROOT} dfc:db:check   --repo-root ${targetRoot}
-  3. Migrate:  pnpm --dir ${REPO_ROOT} dfc:db:migrate --repo-root ${targetRoot}
-  4. Ingest:   pnpm --dir ${REPO_ROOT} dfc:ingest     --repo-root ${targetRoot} --limit 50
-  5. Load the plugin in the target repo:  claude --plugin-dir ${REPO_ROOT}
-  6. Dashboard: pnpm --dir ${REPO_ROOT} dfc:dashboard --repo-root ${targetRoot}`);
+  2. Verify:   pnpm --dir ${STUDIO_ROOT} dfc:db:check   --repo-root ${targetRoot}
+  3. Migrate:  pnpm --dir ${STUDIO_ROOT} dfc:db:migrate --repo-root ${targetRoot}
+  4. Ingest:   pnpm --dir ${STUDIO_ROOT} dfc:ingest     --repo-root ${targetRoot} --limit 50
+  5. Load the plugin in the target repo:  claude --plugin-dir ${STUDIO_ROOT}
+  6. Dashboard: pnpm --dir ${STUDIO_ROOT} dfc:dashboard --repo-root ${targetRoot}`);
 }
 
 try {
