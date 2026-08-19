@@ -22,9 +22,12 @@ import { randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { normalizeSourceAgent } from "@voidarch/context/agents";
 import { clean } from "@voidarch/context/runs";
-import { parseEnvFile, REPO_ROOT } from "@voidarch/context/surreal";
+import { parseEnvFile } from "@voidarch/context/surreal";
+
+const STUDIO_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 
 const MODES = ["review", "implement", "diff-review"] as const;
 type Mode = (typeof MODES)[number];
@@ -64,7 +67,7 @@ function parseArgs(argv: string[]): Args {
 
 /** `.dfc/grok.env` (gitignored) over `.dfc/grok.example.env`, both relative to this package's own root. */
 function loadGrokFileEnv(): Record<string, string> {
-  const dfcDir = join(REPO_ROOT, ".dfc");
+  const dfcDir = join(STUDIO_ROOT, ".dfc");
   return {
     ...parseEnvFile(join(dfcDir, "grok.example.env")),
     ...parseEnvFile(join(dfcDir, "grok.env")),
