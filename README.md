@@ -10,7 +10,7 @@ VoidArch Studio is an active-development control room for running and supervisin
 
 This monorepo contains two related layers:
 
-- **[VoidArch Context](packages/voidarch-context/README.md)** indexes, remembers, searches and assembles repository context. It is independently usable and is also maintained in the standalone `VoidArch-Labs/voidarch-context` repository.
+- **[VoidArch Context](https://github.com/VoidArch-Labs/voidarch-context)** indexes, remembers, searches and assembles repository context. Studio consumes that standalone repository as its canonical Context implementation, pinned by commit in `package.json`.
 - **VoidArch Studio** launches, routes, observes and controls coding-agent sessions. Studio uses Context, while Context does not require Studio.
 
 ## Implemented
@@ -85,7 +85,7 @@ Requirements:
 - `claude`, `codex` or another configured executable only when launching those profiles.
 
 ```bash
-git clone https://github.com/VoidArch-Labs/voidarch.git
+git clone https://github.com/VoidArch-Labs/voidarch-studio.git
 cd voidarch
 pnpm install --frozen-lockfile
 pnpm typecheck
@@ -117,7 +117,6 @@ pnpm tauri build --debug --no-bundle
 ## Repository layout
 
 ```text
-packages/voidarch-context/   embedded memory, search, graph and context-pack package
 dashboard/                   static Studio web client
 scripts/dfc-dashboard.ts     localhost server and Studio APIs
 scripts/studio-sessions.ts   PTY session engine and WebSocket transport
@@ -141,7 +140,7 @@ docs/                        architecture, operation and validation documents
 
 ## Context package
 
-The included workspace package is documented at [`packages/voidarch-context/README.md`](packages/voidarch-context/README.md). The separate public `VoidArch-Labs/voidarch-context` repository remains available under the MIT License; this embedded workspace copy is governed by this repository's proprietary license.
+Repository memory, search, graph and context-pack functionality comes from the standalone [`VoidArch-Labs/voidarch-context`](https://github.com/VoidArch-Labs/voidarch-context) package. Studio pins a verified Context commit rather than maintaining a second editable implementation.
 
 ## License
 
